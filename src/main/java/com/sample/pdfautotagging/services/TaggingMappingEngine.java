@@ -16,9 +16,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class TaggingMappingEngine  extends PDFTextStripper {
 
+    //This for one page
     //We want to have a list of text positions
    //   public  List<TextPosition> textPositions = new ArrayList<>();
     // This tracks the raw stream operator currently being processed
@@ -31,8 +33,8 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
     // This map will store the Operator reference and the MCID it belongs to.
     // We will use this map in Pass 2 to know exactly which operators to wrap.
-    @Getter
-    private Map<Operator, Integer> operatorToMcidMap = new HashMap<>();
+    //There are now stored in the PdfTextBlocks
+
 
     public TaggingMappingEngine(Page page) {
         super();
@@ -51,6 +53,7 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         //(Tj or TJ) operator
 
         this.currentOperator = operator;
+        System.out.println("OPERANDS :"+ operands.stream().map(Object::toString).collect(Collectors.joining(";")));
 
 
         System.out.println(currentOperator);
