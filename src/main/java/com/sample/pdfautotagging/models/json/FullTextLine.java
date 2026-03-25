@@ -1,6 +1,7 @@
-package com.sample.pdfautotagging.models;
+package com.sample.pdfautotagging.models.json;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,10 +14,9 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class FullTextItem {
-    private int type;
-    private int number;
-    private int flags;
+public class FullTextLine {
+    private List<Span> spans;
+    private int wmode;
+    private List<Double> dir;
     private List<Double> bbox;
-    private List<FullTextLine> lines;
 }

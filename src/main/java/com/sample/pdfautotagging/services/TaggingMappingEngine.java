@@ -1,10 +1,10 @@
 package com.sample.pdfautotagging.services;
-import com.sample.pdfautotagging.models.Box;
-import com.sample.pdfautotagging.models.Page;
+import com.sample.pdfautotagging.models.json.Box;
+import com.sample.pdfautotagging.models.json.Page;
 import com.sample.pdfautotagging.models.PdfTextBlock;
 import com.sample.pdfautotagging.models.PdfTextLine;
-import lombok.Getter;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -13,11 +13,10 @@ import org.apache.pdfbox.text.TextPosition;
 import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 public class TaggingMappingEngine  extends PDFTextStripper {
 
     //This for one page
@@ -100,29 +99,53 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
     //This will be called on each  text , to get thier position
 
-    protected void processTextPosition(TextPosition text) {
+    protected void processTextPosition(TextPosition textPosition    ) {
 
 
+        log.info("We are inside PDF TextLine {} ,",currentPdfTextBlock.getCurrentPdfTextLine().toString());
         //We want to draw
        // if (currentOperator == null) return;
 
         //We want to check if we are currently in a text box and in a text line and the text line has not measured it first character
-        if(currentPdfTextBlock == null || currentPdfTextBlock.getCurrentPdfTextLine() == null || currentPdfTextBlock.getCurrentPdfTextLine().isHasMeasuredFirstLine()) return;
+        //We are moving out of the measured first line
+        //We would need to get the bounding box
+        if(currentPdfTextBlock == null || currentPdfTextBlock.getCurrentPdfTextLine() == null ) return;
 
        // Calculate X -Y coordinates of the  bounding BOX , which is top-left coordinates
         //Of the current Pdf Text Line
         // text.getYDirAdj() is the font baseline. Subtracting height gives us the top-left Y.
-        float x = text.getXDirAdj();
-        float y = text.getYDirAdj() - text.getHeightDir();
-        float w = text.getWidthDirAdj();
-        float h = text.getHeightDir();
+        // 1. Calculate this specific character's boundaries
+        double charX0 = textPosition.getXDirAdj();
+        // Remember: YDirAdj is the baseline (bottom). Subtract height to get the top!
+        //Since text startsfrom the baseline
+        double charY0 = textPosition.getYDirAdj() - textPosition.getHeightDir();
 
-        Rectangle2D.Float charBox = new Rectangle2D.Float(x, y, w, h);
+        double charX1 = charX0 + textPosition.getWidthDirAdj();
+        double charY1 = textPosition.getYDirAdj(); // The baseline is the maximum Y
+        //Since Tl sets the baseline and T* = (0 -TL) Td , which affects the displacement in the matrix
+
+        //Now we want the 0, to be the minimum and the 1 to be the maximum
+
+        var currentTextLine = currentPdfTextBlock.getCurrentPdfTextLine();
+        currentTextLine.setX0(Math.min(currentTextLine.getX0(),charX0));
+        currentTextLine.setY0(Math.min(currentTextLine.getY0(),charY0));
+        //Then the inverse
+        currentTextLine.setX1(Math.max(currentTextLine.getX1(),charX1));
+        currentTextLine.setY1(Math.max(currentTextLine.getY1(),charY1));
+
+
+
+        Rectangle2D.Double charBox = new Rectangle2D.Double(charX0,charY0,(charX1-charX0),(charY1-charY0));
+
+
 
         //We would loop through the Boxs of the current Page
         for(Box box : page.getBoxes()){
             if(isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(box, charBox)){
-                currentPdfTextBlock.getCurrentPdfTextLine().getTheBoxsYouBelongTo().add(box);
+                //We would need to check if it has not been added
+                if(!currentPdfTextBlock.getCurrentPdfTextLine().getTheBoxsYouBelongTo().contains(box)) {
+                    currentPdfTextBlock.getCurrentPdfTextLine().getTheBoxsYouBelongTo().add(box);
+                }
             }
         }
         //Now after looping through , we will check , if the text line has been added to one or more boxes , if yes , we move on , else we continue
@@ -134,7 +157,7 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
         // Just set it to true immediately after the loop!
         currentPdfTextBlock.getCurrentPdfTextLine().setHasMeasuredFirstLine(true);
-        super.processTextPosition(text);
+        super.processTextPosition(textPosition);
 
         // 2. The Hit-Test Logic goes here!
         // In your main execution block, you will pass your JSON array in here.
@@ -152,7 +175,7 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         // which is exactly why we rely entirely on the charBox spatial coordinates!
     }
 
-    boolean isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(Box jsonBox , Rectangle2D.Float charBox){
+    boolean isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(Box jsonBox , Rectangle2D charBox){
        //We would just need to check if the start x , is below or equal the start x of the origin
         //Do the same for
 

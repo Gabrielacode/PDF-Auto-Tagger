@@ -1,10 +1,10 @@
 package com.sample.pdfautotagging.services;
 
-import com.sample.pdfautotagging.models.Box;
-import com.sample.pdfautotagging.models.Page;
-import com.sample.pdfautotagging.models.PdfData;
-import com.sample.pdfautotagging.models.PdfTextBlock;
-import org.apache.pdfbox.contentstream.PDContentStream;
+import com.sample.pdfautotagging.models.PdfTextLine;
+import com.sample.pdfautotagging.models.TableCell;
+import com.sample.pdfautotagging.models.json.Box;
+import com.sample.pdfautotagging.models.json.Page;
+import com.sample.pdfautotagging.models.json.PdfData;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.*;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
@@ -17,6 +17,7 @@ import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkInfo;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot;
+import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.PDTableAttributeObject;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes;
 
 import java.io.IOException;
@@ -138,7 +139,8 @@ public class PdfAccessibilityTagInjector {
 
                             // Add it to the box mcid list
                             box.getAssignedMcids().add((int) countOfMCIDS);
-
+                            //Assign it also to the text line
+                            currentTextLine.setAssignedMcid((int) countOfMCIDS);
                             countOfMCIDS++;
                             textLineIndex++;
                         }
@@ -179,7 +181,7 @@ public class PdfAccessibilityTagInjector {
         pdfDocument.getPage(index).setContents(pdStream);
     }
 
-    public void buildStructureTreeForEachPage(PDPage pdfPage , int pageIndex , Page jsonPage,PDStructureElement documentElement,Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap){
+    public void buildStructureTreeForEachPage(PDPage pdfPage , int pageIndex , Page jsonPage,PDStructureElement documentElement,Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap,TaggingMappingEngine taggingMappingEngine){
 
         // 3. Prepare the ParentTree (The Bridge between Page and Document)
 
@@ -240,11 +242,95 @@ public class PdfAccessibilityTagInjector {
                         lbodyElement.appendKid(textMcid);
 
                         mcidToElementMap.put(textMcid, lbodyElement); // Add to ParentTree index!
+                        //--ADDED THIS GEMINI SHOULD CONFIRM THAT IT IS CORRECT
+                        if (bulletMcid > highestMcid) highestMcid = bulletMcid;
                     }
                     liElement.appendKid(lbodyElement); // Attach to <LI>
                 }
 
-            } else{
+            }
+            //We are in a table
+            //We would need to get the table cellsfirst from the box
+            else if("table".equalsIgnoreCase(box.getBoxclass())) {
+
+                //We break the former list container
+                currentListContainer =null;
+                //We would first get our list of tables cells using the Table Spatial Matcher we created
+                TableSpatialMatcher tableSpatialMatcher = new TableSpatialMatcher();
+                var listOfPdfTextBoxes = taggingMappingEngine.listOfPdfTextBlocksInThePage;
+                var listOfTableCells = tableSpatialMatcher.mapTextToTableCells(box,listOfPdfTextBoxes);
+
+                //Now we have all the table cells we want to create our
+                //Table structure Element , that will contain
+                //The Tr elements for each row
+                //Then each Tr , we will contain the list of Th or Td
+                //The document element will be the head of the table document
+                PDStructureElement tableStructureElement  = new PDStructureElement(StandardStructureTypes.TABLE, documentElement);
+                //We set the page
+                tableStructureElement.setPage(pdfPage);
+                documentElement.appendKid(tableStructureElement);
+
+                //Then we would loop through the rows of the table
+                for (int i = 0; i < box.getTable().getRowCount(); i++) {
+                    //For each row , we will create a corresponding Table row element
+                    PDStructureElement tableRowStructureElement = new PDStructureElement(StandardStructureTypes.TR,tableStructureElement);
+                    tableRowStructureElement.setPage(pdfPage);
+                    //We would append it to the table structure element
+                    tableStructureElement.appendKid(tableRowStructureElement);
+                    //Now we get all the Table cells that are here
+                    int index = i;
+                    List<TableCell> currentRowTableCells = listOfTableCells.stream().filter((tableCell)-> tableCell.getRowIndex() == index).toList();
+                    //Now we will just check if we are in the first row
+
+                        for (TableCell cell :currentRowTableCells) {
+                            //We will create header structure elements or Td elements
+
+                            PDStructureElement tableRowChildStructureElement = (index==0)?
+                                    new PDStructureElement(StandardStructureTypes.TH,tableRowStructureElement)
+                                    : new PDStructureElement(StandardStructureTypes.TD,tableRowStructureElement);
+                            tableRowStructureElement.appendKid(tableRowChildStructureElement);
+                            tableRowChildStructureElement.setPage(pdfPage);
+                            //Then get the col span and row  and set it to the attributes of the element.IF ANY IS grater than 1
+                            if(cell.getRowSpan() > 1 || cell.getColumnSpan()>1) {
+                                PDTableAttributeObject tableAttributeObject = new PDTableAttributeObject();
+
+                                if (cell.getColumnSpan() > 1) {
+                                    tableAttributeObject.setColSpan(cell.getColumnSpan());
+                                }
+                                if (cell.getRowSpan() > 1) {
+                                    tableAttributeObject.setRowSpan(cell.getRowSpan());
+                                }
+                                //Then set it to the  element
+                                tableRowChildStructureElement.addAttribute(tableAttributeObject);
+                            }
+
+                            //Then our P element , as it is enclosed in the TD or TH element
+                            PDStructureElement pElement = new PDStructureElement(StandardStructureTypes.P, tableRowChildStructureElement);
+                            pElement.setPage(pdfPage);
+                            tableRowChildStructureElement.appendKid(pElement);
+
+                            //Then get the MCID numbers assigned to each text line
+                            //Attach it to the P tags
+                            var mcidNumbers = cell.pdfTextLines.stream().map(PdfTextLine::getAssignedMcid).toList();
+
+                            for(Integer mcidNumber : mcidNumbers){
+                                if(mcidNumber == -1) continue;
+                                pElement.appendKid(mcidNumber);
+                                //Then do the same to the mcid map
+                                mcidToElementMap.put(mcidNumber,pElement);
+
+                                //Then set the highest MCID
+                                highestMcid =Math.max(highestMcid,mcidNumber);
+                            }
+
+                            }
+
+
+
+                            //Then get all the text
+                    }
+
+                } else{
 
                 // Break the list chain! If we hit a normal paragraph, the list is over.
                 currentListContainer = null;
@@ -309,7 +395,7 @@ public class PdfAccessibilityTagInjector {
         for (int i = 0; i<pdfDocument.getPages().getCount();i++){
             if (i >= pdfJsonData.getPages().size())break;
             var jsonPage = pdfJsonData.getPages().get(i);
-            buildStructureTreeForEachPage(pdfDocument.getPage(i),i,jsonPage,documentStructureElement,numTreeMap);
+            buildStructureTreeForEachPage(pdfDocument.getPage(i),i,jsonPage,documentStructureElement,numTreeMap,taggingMappingEngines.get(i));
         }
         //Then set the parent tree here
 

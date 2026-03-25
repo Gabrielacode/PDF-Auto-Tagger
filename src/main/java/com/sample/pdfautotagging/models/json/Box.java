@@ -1,7 +1,8 @@
-package com.sample.pdfautotagging.models;
+package com.sample.pdfautotagging.models.json;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,7 +24,7 @@ public class Box {
 
     private String boxclass;
     private Object image; // Null in JSON, typed as Object
-    private Object table; // Null in JSON, typed as Object
+    private Table table; // Null in JSON, typed as Object
 
     private List<TextLine> textlines;
 

@@ -2,23 +2,18 @@ package com.sample.pdfautotagging;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sample.pdfautotagging.models.Box;
-import com.sample.pdfautotagging.models.PdfExtractionResponse;
+import com.sample.pdfautotagging.models.json.PdfExtractionResponse;
 import com.sample.pdfautotagging.services.PDFDocumentTagAndMarkedContentCleaner;
 import com.sample.pdfautotagging.services.PdfAccessibilityTagInjector;
 import com.sample.pdfautotagging.services.TaggingMappingEngine;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.text.TextPosition;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @SpringBootApplication
 public class PdfAutoTaggingApplication {
@@ -26,11 +21,12 @@ public class PdfAutoTaggingApplication {
     public static void main(String[] args)  {
 
       //  SpringApplication.run(PdfAutoTaggingApplication.class, args)
-        File pdfFile = new File("/home/garbi/Documents/PDF_Auto_Tagging/Final Year Project Topics_2005_2026.docx (copy).pdf");
+        File pdfFile = new File("/home/garbi/Documents/PDF_Auto_Tagging/Testing the Pdf_Clean .pdf");
         //We want to get the correspondingJson
-        File pdfJsonFile = new File ("/home/garbi/Documents/PDF_Auto_Tagging/final_year_project.json");
+        File pdfJsonFile = new File ("/home/garbi/Documents/PDF_Auto_Tagging/Testing_the_Pdf_Clean.json");
         try (PDDocument pdDocument = Loader.loadPDF(pdfFile)) {
             System.out.println("Starting");
+
 
             ObjectMapper objectMapper = new ObjectMapper();
             objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -69,7 +65,7 @@ public class PdfAutoTaggingApplication {
 
             //Then we write it to a Document file
 
-            File outputFile = new File("/home/garbi/Documents/PDF_Auto_Tagging/tagged_output.pdf");
+            File outputFile = new File("/home/garbi/Documents/PDF_Auto_Tagging/tagged_output_clean.pdf");
             pdDocument.save(outputFile);
             System.out.println("SUCCESS! Tagged PDF saved to: " + outputFile.getAbsolutePath());
 
