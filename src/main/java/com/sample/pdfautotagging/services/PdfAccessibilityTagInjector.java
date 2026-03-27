@@ -1,17 +1,18 @@
 package com.sample.pdfautotagging.services;
 
+import com.sample.pdfautotagging.models.FontStyle;
 import com.sample.pdfautotagging.models.PdfTextLine;
 import com.sample.pdfautotagging.models.TableCell;
-import com.sample.pdfautotagging.models.json.Box;
-import com.sample.pdfautotagging.models.json.Page;
-import com.sample.pdfautotagging.models.json.PdfData;
+import com.sample.pdfautotagging.models.json.*;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.*;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdfwriter.ContentStreamWriter;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentCatalog;
+import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDMetadata;
 import org.apache.pdfbox.pdmodel.common.PDNumberTreeNode;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkInfo;
@@ -19,13 +20,17 @@ import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructur
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.PDTableAttributeObject;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes;
+import org.apache.xmpbox.XMPMetadata;
+import org.apache.xmpbox.schema.DublinCoreSchema;
+import org.apache.xmpbox.schema.XMPBasicSchema;
+import org.apache.xmpbox.xml.XmpSerializer;
 
+import javax.xml.transform.TransformerException;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class PdfAccessibilityTagInjector {
     //After we have mapped all the TextBlocks and the Text Lines of the Page we would need a way to inject the accessibility tags into the PDF Content Stream
@@ -37,6 +42,7 @@ public class PdfAccessibilityTagInjector {
     long countOfMCIDS =0;
     long textBlockIndex =0;
     long textLineIndex =0;
+    Map<Integer,Map<Double, String> >pagesAndThierMappedHeadersFonts;
 
 
      PDFStreamParser pdfStreamParser = null;
@@ -48,6 +54,20 @@ public class PdfAccessibilityTagInjector {
         this.taggingMappingEngines = taggingMappingEngines;
     }
 
+    void mapPagesAndThierFontStyles() {
+        pagesAndThierMappedHeadersFonts = new HashMap<>();
+
+        // Loop with the integer index
+        for (int i = 0; i < pdfJsonData.getPages().size(); i++) {
+            Page page = pdfJsonData.getPages().get(i);
+            var fontStyles = getFontsSizesOrderedBySizeAndNumberOfTimesAppearedInPdfPage(page);
+            var mappedHeaderFonts = buildDynamicHeadingMap(fontStyles);
+
+            // Save using the Integer index!
+            pagesAndThierMappedHeadersFonts.put(i, mappedHeaderFonts);
+        }
+    }
+
 
     public List<Object> injectAccessibilityTokensForText(int pageIndex) throws IOException {
         //We will parse the whole page
@@ -55,6 +75,13 @@ public class PdfAccessibilityTagInjector {
         pdfStreamParser = new PDFStreamParser(pdfDocument.getPage(pageIndex));
         List<Object> newPdfObjectList = new ArrayList<>();
         var listOfTokens = pdfStreamParser.parse();
+
+        //We want to keep track of the images
+        var currentPageJson = pdfJsonData.getPages().get(pageIndex);
+        List<Box> pictureBoxes = currentPageJson.getBoxes().stream()
+                .filter(box -> "picture".equalsIgnoreCase(box.getBoxclass()))
+                .toList();
+        int currentPictureIndex = 0;
         //We loop through the List
         for(Object token :  listOfTokens){
             //Are you  a not an operator
@@ -99,12 +126,41 @@ public class PdfAccessibilityTagInjector {
 
                         if(currentTextLine.getTheBoxsYouBelongTo().isEmpty()){
                             // No Box was assigned to you, skip and increment
+                            //We want to  make it Artifact so that we could tell the PDF reader to ignore it
+                            //By popping the necessary
+                            List<Object> operandsToRestore = new ArrayList<>();
+                            if (operator.getName().equals("\"")) {
+                                //We pop 3 here
+                                Object op3 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                                Object op2 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                                Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                                operandsToRestore.add(op1);
+                                operandsToRestore.add(op2);
+                                operandsToRestore.add(op3);
+                            } else {
+                                //Else we pop one
+                                operandsToRestore.add(newPdfObjectList.remove(newPdfObjectList.size() - 1));
+                            }
+
+                            // 2. Wrap the text in an Artifact block!
+                            newPdfObjectList.add(COSName.ARTIFACT);
+                            newPdfObjectList.add(Operator.getOperator("BMC")); // BMC doesn't need a dictionary!
+                            //It is just a wrapper
+
+                            newPdfObjectList.addAll(operandsToRestore);
                             newPdfObjectList.add(operator);
+
+                            newPdfObjectList.add(Operator.getOperator("EMC")); // Close the Artifact
+
                             textLineIndex++;
                             break;
+
                         } else {
                             var box = currentTextLine.getTheBoxsYouBelongTo().get(0);
-                            var pdfTag = translateBoxClassToPdfTag(box.getBoxclass());
+
+                            var mappedHeadings = pagesAndThierMappedHeadersFonts.get(pageIndex);
+                            var pdfTag = translateBoxClassToPdfTag(box, mappedHeadings);
+
 
                             // Use setInt for MCID, it is the strict PDF standard
                             var mcidDictionary  = new COSDictionary();
@@ -145,6 +201,51 @@ public class PdfAccessibilityTagInjector {
                             textLineIndex++;
                         }
 
+                        break;
+                    case "Do":
+                        //  Pop the single operand (the XObject name, e.g., /Im1)
+                        Object imageOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+
+                        //  Check if we have a mapped Docling picture box for this image
+                        if (currentPictureIndex < pictureBoxes.size()) {
+                            Box picBox = pictureBoxes.get(currentPictureIndex);
+
+                            // Set up the MCID dictionary
+                            var mcidDictionary = new COSDictionary();
+                            mcidDictionary.setInt(COSName.MCID, (int) countOfMCIDS);
+
+                            // Wrap in a <Figure> BDC tag
+                            newPdfObjectList.add(COSName.getPDFName(StandardStructureTypes.Figure));
+                            newPdfObjectList.add(mcidDictionary);
+                            newPdfObjectList.add(Operator.getOperator("BDC"));
+
+                            // Restore the operand and the "Do" operator
+                            newPdfObjectList.add(imageOperand);
+                            newPdfObjectList.add(operator);
+
+                            // Close the tag
+                            newPdfObjectList.add(Operator.getOperator("EMC"));
+
+                            // Safely initialize the MCID list for the Box if Docling left it null
+                            if (picBox.getAssignedMcids() == null) {
+                                picBox.setAssignedMcids(new ArrayList<>());
+                            }
+                            // Assign the MCID to the picture Box so Pass 3 can find it
+                            picBox.getAssignedMcids().add((int) countOfMCIDS);
+
+                            countOfMCIDS++;
+                            currentPictureIndex++;
+                        } else {
+                            // THE ARTIFACT SWEEPER (For extra/decorative images)
+                            // Docling didn't map this, so hide it from the screen reader!
+                            newPdfObjectList.add(COSName.ARTIFACT);
+                            newPdfObjectList.add(Operator.getOperator("BMC")); // No dictionary needed
+
+                            newPdfObjectList.add(imageOperand);
+                            newPdfObjectList.add(operator);
+
+                            newPdfObjectList.add(Operator.getOperator("EMC"));
+                        }
                         break;
                     default:
                         newPdfObjectList.add(operator);
@@ -243,7 +344,7 @@ public class PdfAccessibilityTagInjector {
 
                         mcidToElementMap.put(textMcid, lbodyElement); // Add to ParentTree index!
                         //--ADDED THIS GEMINI SHOULD CONFIRM THAT IT IS CORRECT
-                        if (bulletMcid > highestMcid) highestMcid = bulletMcid;
+                        if (textMcid > highestMcid) highestMcid = textMcid;
                     }
                     liElement.appendKid(lbodyElement); // Attach to <LI>
                 }
@@ -288,10 +389,14 @@ public class PdfAccessibilityTagInjector {
                             PDStructureElement tableRowChildStructureElement = (index==0)?
                                     new PDStructureElement(StandardStructureTypes.TH,tableRowStructureElement)
                                     : new PDStructureElement(StandardStructureTypes.TD,tableRowStructureElement);
+                            //Add another accessibility tag
+
                             tableRowStructureElement.appendKid(tableRowChildStructureElement);
                             tableRowChildStructureElement.setPage(pdfPage);
                             //Then get the col span and row  and set it to the attributes of the element.IF ANY IS grater than 1
-                            if(cell.getRowSpan() > 1 || cell.getColumnSpan()>1) {
+                            // We always need an attribute object if it's a Header (index == 0) OR if it has spans
+                            if (index == 0 || cell.getRowSpan() > 1 || cell.getColumnSpan() > 1) {
+
                                 PDTableAttributeObject tableAttributeObject = new PDTableAttributeObject();
 
                                 if (cell.getColumnSpan() > 1) {
@@ -300,7 +405,12 @@ public class PdfAccessibilityTagInjector {
                                 if (cell.getRowSpan() > 1) {
                                     tableAttributeObject.setRowSpan(cell.getRowSpan());
                                 }
-                                //Then set it to the  element
+
+                                // Now ALL headers in the top row will get the Scope attribute!
+                                if (index == 0) {
+                                    tableAttributeObject.setScope(PDTableAttributeObject.SCOPE_COLUMN);
+                                }
+
                                 tableRowChildStructureElement.addAttribute(tableAttributeObject);
                             }
 
@@ -336,9 +446,17 @@ public class PdfAccessibilityTagInjector {
                 currentListContainer = null;
 
                 // Create the Semantic Element ( <H1> or <P>)
-                String  pdfTag = translateBoxClassToPdfTag(box.getBoxclass());
+                var mappedHeadings = pagesAndThierMappedHeadersFonts.get(pageIndex);
+                var pdfTag = translateBoxClassToPdfTag(box, mappedHeadings);
                 PDStructureElement element = new PDStructureElement(pdfTag, documentElement);
                 element.setPage(pdfPage); // Tell the element which physical page it lives on
+
+                //If it is an Image we will add an Alt Text
+
+                if (StandardStructureTypes.Figure.equals(pdfTag)) {
+                    // PDF/UA strictly requires Alt text for all figures.
+                    element.setAlternateDescription("Image extracted from document");
+                }
 
                 // Add the MCIDs to the Element
                 for (int mcid : box.getAssignedMcids()) {
@@ -379,6 +497,9 @@ public class PdfAccessibilityTagInjector {
         markInfo.setMarked(true);
         catalog.setMarkInfo(markInfo);
 
+        //We will need to set the Language of the Document Catalog
+        injectDocumentMetadataAndLanguage();
+
 
         // 2. Create the Structure Tree Root (The Front Desk)
         PDStructureTreeRoot treeRoot = new PDStructureTreeRoot();
@@ -403,11 +524,145 @@ public class PdfAccessibilityTagInjector {
         parentTree.setNumbers(numTreeMap);
         treeRoot.setParentTree(parentTree);
     }
+    //We want to inject XMP Metadata and the Language to the PDF
+    public void injectDocumentMetadataAndLanguage(){
+    PDDocumentCatalog documentCatalog = pdfDocument.getDocumentCatalog();
+
+    //We want to get the catalog
+        // 1. Set the Language (Fixes veraPDF Rule 7.2.29)
+        // You can hardcode "en-US" or pull it from your app config
+        documentCatalog.setLanguage("en-US");
+
+    //Set the Standard Document Information Dictionary
+        PDDocumentInformation pdDocumentInformation = pdfDocument.getDocumentInformation();
+        PdfMetadata jsonMeta = pdfJsonData.getMetadata();
+
+        if (jsonMeta != null) {
+            if (jsonMeta.getTitle() != null && !jsonMeta.getTitle().isEmpty()) {
+                //If there is a title
+                pdDocumentInformation.setTitle(jsonMeta.getTitle());
+            } else {
+                pdDocumentInformation.setTitle("Auto-Tagged Document"); // PDF/UA absolutely requires a title!
+            }
+            pdDocumentInformation.setAuthor(jsonMeta.getAuthor());
+            pdDocumentInformation.setSubject(jsonMeta.getSubject());
+            pdDocumentInformation.setCreator(jsonMeta.getCreator());
+            pdDocumentInformation.setProducer(jsonMeta.getProducer());
+        }
+        pdfDocument.setDocumentInformation(pdDocumentInformation);
+        //Set the XMP Metadata for Proper Validation by Vera PDF
+        try {
+            XMPMetadata xmpMetadata =XMPMetadata.createXMPMetadata();
+
+            //We want to create a Dublin Core Scheme that will hold the title and the author
+            DublinCoreSchema dublinCoreSchema = xmpMetadata.createAndAddDublinCoreSchema();
+            dublinCoreSchema.setTitle(pdDocumentInformation.getTitle());
+            if (pdDocumentInformation.getAuthor() != null && !pdDocumentInformation.getAuthor().isEmpty()) {
+                dublinCoreSchema.addCreator(pdDocumentInformation.getAuthor());
+            }
+            // XMP Basic Schema (Holds the Creator Tool info)
+            XMPBasicSchema xmpBasic = xmpMetadata.createAndAddXMPBasicSchema();
+            xmpBasic.setCreatorTool(pdDocumentInformation.getProducer());
+
+            // --- ADD THIS BLOCK: PDF/UA Identification Schema ---
+            org.apache.xmpbox.schema.XMPSchema pdfuaSchema = new org.apache.xmpbox.schema.XMPSchema(
+                    xmpMetadata,
+                    "http://www.aiim.org/pdfua/ns/id/", // The official PDF/UA namespace
+                    "pdfuaid",                          // The official prefix
+                    "pdfua Identification Schema"       // Description
+            );
+            pdfuaSchema.setIntegerPropertyValue("part", 1); // We are declaring compliance with PDF/UA Part 1
+            xmpMetadata.addSchema(pdfuaSchema);
+            // Serialize the XMP data into an XML byte stream
+            XmpSerializer serializer = new XmpSerializer();
+            ByteArrayOutputStream byteOutputStream = new ByteArrayOutputStream();
+            serializer.serialize(xmpMetadata, byteOutputStream, true);
+
+            // Inject the XML stream into the PDF Catalog
+            PDMetadata metadataStream = new PDMetadata(pdfDocument);
+            metadataStream.importXMPMetadata(byteOutputStream.toByteArray());
+            documentCatalog.setMetadata(metadataStream);
+        } catch (Exception e) {
+
+                System.err.println("Failed to inject XMP Metadata: " + e.getMessage());
+        }
+    }
+    //We want to get the highest  and second highest font sizes and third highes font sizes from the fonts on a page
+    public List<FontStyle> getFontsSizesOrderedBySizeAndNumberOfTimesAppearedInPdfPage(Page pdfJsonPage) {
+
+        // 1. Extract all Spans safely (Your existing code)
+        var allSpans = pdfJsonPage.getBoxes().stream()
+                .filter(box -> box.getTextlines() != null)
+                .flatMap(box -> box.getTextlines().stream())
+                .filter(line -> line.getSpans() != null)
+                .flatMap(line -> line.getSpans().stream())
+                .toList();
+
+        // 2. Map Spans to FontStyle objects
+        var allFonts = allSpans.stream().map(span -> {
+            var newFontStyle = new FontStyle();
+            newFontStyle.setFontSize(span.getSize());
+            newFontStyle.setName(span.getFont());
+            return newFontStyle;
+        });
+
+        // 3. Group by the FontStyle (uses your EqualsAndHashCode) AND Count the occurrences!
+        Map<FontStyle, Long> groupedAndCountedFonts = allFonts.collect(
+                Collectors.groupingBy(fontStyle -> fontStyle, Collectors.counting())
+        );
+
+        // 4. Map the counts back into the objects, and SORT them!
+        return groupedAndCountedFonts.entrySet().stream()
+                .map(entry -> {
+                    FontStyle fontStyle = entry.getKey();
+                    // Inject the count back into your appearance field
+                    fontStyle.setAppearance(entry.getValue().intValue());
+                    return fontStyle;
+                })
+                // 5. Sort: First by Size (Largest to Smallest), then by Appearance (Most to Least)
+                .sorted(
+                        Comparator.comparingDouble(FontStyle::getFontSize).reversed()
+                                .thenComparingInt(FontStyle::getAppearance).reversed()
+                )
+                .toList();
+    }
+    //Now dynamically assign the headings to them
+    public Map<Double, String> buildDynamicHeadingMap(List<FontStyle> pageFonts) {
+        Map<Double, String> headingMap = new HashMap<>();
+        if (pageFonts == null || pageFonts.isEmpty()) return headingMap;
+
+        // 1. Find the Baseline Font (The one used the most times on the page)
+        FontStyle baselineFont = pageFonts.stream()
+                .max(Comparator.comparingInt(FontStyle::getAppearance))
+                .orElse(pageFonts.get(0));
+
+        // 2. Extract all distinct sizes that are LARGER than the baseline
+        List<Double> headingSizes = pageFonts.stream()
+                .map(FontStyle::getFontSize)
+                .filter(size -> size > baselineFont.getFontSize())
+                .distinct()
+                .sorted(Comparator.reverseOrder()) // Sort Largest to Smallest
+                .toList();
+
+        // 3. Assign H1 to the largest, H2 to the second largest, etc.
+        int level = 1;
+        for (Double size : headingSizes) {
+            if (level > 6) break; // PDF standard stops at H6
+            headingMap.put(size, StandardStructureTypes.H + level); // Generates "H1", "H2"...
+            level++;
+        }
+
+        return headingMap;
+    }
 
     //Then now the final looping
     //The final form
 
     public void transformPDFDocumentAccessibility() throws IOException {
+
+        //We want to pre compute the fonts
+
+        mapPagesAndThierFontStyles();
         for (int i =0;  i < pdfDocument.getPages().getCount();i++){
             if (i >= pdfJsonData.getPages().size()) {
                 //We want to ensure that the JSON exists
@@ -423,23 +678,38 @@ public class PdfAccessibilityTagInjector {
 
 
 
-    public String translateBoxClassToPdfTag(String boxClass) {
-        if (boxClass == null) return StandardStructureTypes.P; // Default to paragraph
+    public String translateBoxClassToPdfTag(Box box, Map<Double, String> headingMap) {
+        if (box == null || box.getBoxclass() == null) return StandardStructureTypes.P;
 
-        switch (boxClass.toLowerCase()) {
+        switch (box.getBoxclass().toLowerCase()) {
             case "section-header":
-                // For now, all headers are H1. Later, the JSON can provide h1, h2, etc.
-                return StandardStructureTypes.H;
+                double boxFontSize = 0.0;
+
+                // Extract the font size from the first span in this box
+                if (box.getTextlines() != null) {
+                    boxFontSize = box.getTextlines().stream()
+                            .filter(line -> line.getSpans() != null)
+                            .flatMap(line -> line.getSpans().stream())
+                            .findFirst()
+                            .map(Span::getSize)
+                            .orElse(0.0);
+                }
+
+                // Look up the size in our dynamic map!
+                // If it's not in the map (e.g. Docling got confused and called baseline text a header), default to P
+                return headingMap.getOrDefault(boxFontSize, StandardStructureTypes.P);
+
             case "list-item":
                 return StandardStructureTypes.LI;
             case "picture":
                 return StandardStructureTypes.Figure;
+            case "table":
+                return StandardStructureTypes.TABLE;
             case "text":
+            case "page-footer":
                 return StandardStructureTypes.P;
-            case "page-footer":// You can map footers to paragraphs or Artifacts!
-                return  StandardStructureTypes.P;
             default:
-                return StandardStructureTypes.P; // Standard reading text
+                return StandardStructureTypes.P;
         }
     }
 
