@@ -54,8 +54,6 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         this.currentOperator = operator;
        // System.out.println("OPERANDS :"+ operands.stream().map(Object::toString).collect(Collectors.joining(";")));
 
-
-        System.out.println(currentOperator);
         //We want  to keep check of the current  operator
         //If we see Bt ,we want to create a new text block  and set it as the current text block
         //If we see Et , we want to  add the current Text block to the list of text blocks and then set the current Text Box to null
@@ -91,11 +89,6 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
 
 
-
-
-
-
-
     @Override
 
 
@@ -103,8 +96,6 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
     protected void processTextPosition(TextPosition textPosition    ) {
 
-
-        log.info("We are inside PDF TextLine {} ,",currentPdfTextBlock.getCurrentPdfTextLine().toString());
         //We want to draw
        // if (currentOperator == null) return;
 

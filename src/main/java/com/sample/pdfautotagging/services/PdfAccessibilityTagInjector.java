@@ -205,6 +205,8 @@ public class PdfAccessibilityTagInjector {
                         }
 
                         break;
+                        //For Images
+
                     case "Do":
                         //  Pop the single operand (the XObject name, e.g., /Im1)
                         Object imageOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
@@ -249,6 +251,42 @@ public class PdfAccessibilityTagInjector {
 
                             newPdfObjectList.add(Operator.getOperator("EMC"));
                         }
+                        break;
+                    // Table borders, background colors, and decorative lines.
+                    //They all need to be marked
+
+                    case "S":   // Stroke path
+                    case "s":   // Close and stroke path
+                    case "f":   // Fill path
+                    case "F":   // Fill path (obsolete but still used)
+                    case "f*":  // Fill path (even-odd rule)
+                    case "B":   // Fill and stroke path
+                    case "B*":  // Fill and stroke path (even-odd rule)
+                    case "b":   // Close, fill, and stroke path
+                    case "b*":  // Close, fill, and stroke path (even-odd rule)
+                    case "n":   // End path without filling or stroking
+
+                        // These operators take ZERO operands! Just wrap them in a BMC Artifact block.
+                        newPdfObjectList.add(COSName.ARTIFACT);
+                        newPdfObjectList.add(Operator.getOperator("BMC"));
+
+                        newPdfObjectList.add(operator); // The painting operator (S, f, B, etc.)
+
+                        newPdfObjectList.add(Operator.getOperator("EMC"));
+                        break;
+
+                    case "sh": // Shading (Gradients)
+                        // Shading takes exactly 1 operand (the shading dictionary name)
+                        //And still need to be marked
+                        Object shadingOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+
+                        newPdfObjectList.add(COSName.ARTIFACT);
+                        newPdfObjectList.add(Operator.getOperator("BMC"));
+
+                        newPdfObjectList.add(shadingOperand);
+                        newPdfObjectList.add(operator);
+
+                        newPdfObjectList.add(Operator.getOperator("EMC"));
                         break;
                     default:
                         newPdfObjectList.add(operator);
