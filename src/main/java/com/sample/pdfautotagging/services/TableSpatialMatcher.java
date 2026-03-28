@@ -1,8 +1,8 @@
 package com.sample.pdfautotagging.services;
 
-import com.sample.pdfautotagging.models.PdfTextBlock;
-import com.sample.pdfautotagging.models.PdfTextLine;
-import com.sample.pdfautotagging.models.TableCell;
+import com.sample.pdfautotagging.models.pdf.PdfTextBlock;
+import com.sample.pdfautotagging.models.pdf.PdfTextLine;
+import com.sample.pdfautotagging.models.pdf.TableCell;
 import com.sample.pdfautotagging.models.json.Box;
 
 import java.util.ArrayList;
@@ -19,7 +19,7 @@ public class TableSpatialMatcher {
         int rowCount = tableBox.getTable().getRowCount();
         int colCount = tableBox.getTable().getColCount();
 
-        // --- NEW: The 'Claimed' Grid ---
+
         //We want col spans to be claimed
         //And also row spans
         boolean[][] claimed = new boolean[rowCount][colCount];
@@ -27,18 +27,18 @@ public class TableSpatialMatcher {
         for (int r = 0; r < rowCount; r++) {
             for (int c = 0; c < colCount; c++) {
 
-                // 1. If a previous cell's colSpan or rowSpan already ate this slot, skip it!
+                //  If a previous cell's colSpan or rowSpan already ate this slot, skip it!
                 if (claimed[r][c]) continue;
 
                 List<Double> cellBbox = rawCells.get(r).get(c);
 
-                // Safety check: If Docling is weird and gave an unclaimed null, just skip
+                // Safety check: If Json is weird and gave an unclaimed null, just skip
                 if (cellBbox == null || cellBbox.isEmpty()) continue;
 
                 int colSpan = 1;
                 int rowSpan = 1;
 
-                // 2. Calculate ColSpan: Look to the right!
+                //  Calculate ColSpan: Look to the right!
                 // As long as the next cell is unclaimed and null, we eat it.
                 while (c + colSpan < colCount) {
                     //We would get the next  column
@@ -53,7 +53,7 @@ public class TableSpatialMatcher {
                     }
                 }
 
-                // 3. Calculate RowSpan: Look down!
+                //  Calculate RowSpan: Look down!
                 // To span down, the ENTIRE width of our colSpan must be null in the row below.
                 while (r + rowSpan < rowCount) {
                     boolean entireRowSpanIsNull = true;
@@ -72,14 +72,15 @@ public class TableSpatialMatcher {
                     }
                 }
 
-                // 4. Mark all eaten cells as CLAIMED so the loop ignores them later
+                // Mark all eaten cells as CLAIMED so the loop ignores them later
+                //To avoid re mapping
                 for (int rs = 0; rs < rowSpan; rs++) {
                     for (int cs = 0; cs < colSpan; cs++) {
                         claimed[r + rs][c + cs] = true;
                     }
                 }
 
-                // 5. Create our glorious TableCell!
+                //  Create our  TableCell!
                 TableCell newCell = new TableCell();
                 newCell.setRowIndex(r);
                 newCell.setColumnIndex(c);
@@ -90,7 +91,7 @@ public class TableSpatialMatcher {
                         cellBbox.get(0), cellBbox.get(1), cellBbox.get(2), cellBbox.get(3)
                 });
 
-                // 6. Center-Point Collision Math (Unchanged)
+                //  Center-Point Collision Math
                 for (PdfTextBlock block : pageTextBlocks) {
                     for (PdfTextLine line : block.getTextLines()) {
 

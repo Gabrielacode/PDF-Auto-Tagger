@@ -1,12 +1,10 @@
-package com.sample.pdfautotagging.models;
+package com.sample.pdfautotagging.models.pdf;
 
 import lombok.Getter;
 import lombok.Setter;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 public class PdfTextBlock {

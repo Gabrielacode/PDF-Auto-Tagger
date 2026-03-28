@@ -22,7 +22,7 @@ public class PdfData {
     @JsonProperty("page_count")
     private int pageCount;
 
-    private List<Object> toc; // Can be updated to a specific type if TOC structure is known
+    private List<List<Object>> toc; // Can be updated to a specific type if TOC structure is known
     private List<Page> pages;
 
     @JsonProperty("full_ocred")

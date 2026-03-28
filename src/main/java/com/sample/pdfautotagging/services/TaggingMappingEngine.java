@@ -1,8 +1,8 @@
 package com.sample.pdfautotagging.services;
 import com.sample.pdfautotagging.models.json.Box;
 import com.sample.pdfautotagging.models.json.Page;
-import com.sample.pdfautotagging.models.PdfTextBlock;
-import com.sample.pdfautotagging.models.PdfTextLine;
+import com.sample.pdfautotagging.models.pdf.PdfTextBlock;
+import com.sample.pdfautotagging.models.pdf.PdfTextLine;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.contentstream.operator.Operator;
@@ -52,7 +52,7 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         //(Tj or TJ) operator
 
         this.currentOperator = operator;
-        System.out.println("OPERANDS :"+ operands.stream().map(Object::toString).collect(Collectors.joining(";")));
+       // System.out.println("OPERANDS :"+ operands.stream().map(Object::toString).collect(Collectors.joining(";")));
 
 
         System.out.println(currentOperator);
@@ -88,11 +88,7 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         currentOperator = null;
     }
 
-    @Override
-    public void beginText() throws IOException {
-        System.out.println("Page Begin ");
-        super.beginText();
-    }
+
 
 
 
@@ -165,20 +161,6 @@ public class TaggingMappingEngine  extends PDFTextStripper {
         currentPdfTextBlock.getCurrentPdfTextLine().setHasMeasuredFirstLine(true);
         super.processTextPosition(textPosition);
 
-        // 2. The Hit-Test Logic goes here!
-        // In your main execution block, you will pass your JSON array in here.
-        // For demonstration, let's pretend we have a jsonBox [50.34, 17.0, 250.41, 36.38]
-        // and its intended MCID is 0.
-
-        /* if (BoundingBoxHitTester.isHit(jsonBox, charBox, 0.5f)) {
-            // We found a hit! Link this raw PDF operator to our desired MCID.
-            // If this operator draws "SAMUEL", it will now be mapped to MCID 0.
-            operatorToMcidMap.put(currentOperator, 0);
-        }
-        */
-
-        // Note: For Type3 fonts, text.getUnicode() might return gibberish,
-        // which is exactly why we rely entirely on the charBox spatial coordinates!
     }
 
     boolean isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(Box jsonBox , Rectangle2D charBox){

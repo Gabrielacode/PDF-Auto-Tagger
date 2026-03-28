@@ -1,4 +1,4 @@
-package com.sample.pdfautotagging.models;
+package com.sample.pdfautotagging.models.pdf;
 
 import lombok.Getter;
 import lombok.Setter;

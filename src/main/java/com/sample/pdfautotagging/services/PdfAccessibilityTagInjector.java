@@ -1,8 +1,8 @@
 package com.sample.pdfautotagging.services;
 
-import com.sample.pdfautotagging.models.FontStyle;
-import com.sample.pdfautotagging.models.PdfTextLine;
-import com.sample.pdfautotagging.models.TableCell;
+import com.sample.pdfautotagging.models.pdf.FontStyle;
+import com.sample.pdfautotagging.models.pdf.PdfTextLine;
+import com.sample.pdfautotagging.models.pdf.TableCell;
 import com.sample.pdfautotagging.models.json.*;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.*;
@@ -20,12 +20,15 @@ import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructur
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.PDTableAttributeObject;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode;
 import org.apache.xmpbox.XMPMetadata;
 import org.apache.xmpbox.schema.DublinCoreSchema;
 import org.apache.xmpbox.schema.XMPBasicSchema;
 import org.apache.xmpbox.xml.XmpSerializer;
 
-import javax.xml.transform.TransformerException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -499,6 +502,8 @@ public class PdfAccessibilityTagInjector {
 
         //We will need to set the Language of the Document Catalog
         injectDocumentMetadataAndLanguage();
+        //Bild the Document Outline
+        buildDocumentOutline();
 
 
         // 2. Create the Structure Tree Root (The Front Desk)
@@ -653,6 +658,76 @@ public class PdfAccessibilityTagInjector {
         }
 
         return headingMap;
+    }
+
+    /**
+     * Then handling Document Outline
+     * **/
+
+
+    public void buildDocumentOutline() {
+        List<List<Object>> tocData = pdfJsonData.getToc();
+
+        // If Docling didn't find any headers, skip building the outline
+        if (tocData == null || tocData.isEmpty()) {
+            return;
+        }
+
+        PDDocumentOutline outline = new PDDocumentOutline();
+        pdfDocument.getDocumentCatalog().setDocumentOutline(outline);
+
+        // We use an array to track the last seen item at each heading level (up to H6)
+        // Level 0 is the root outline. Level 1 is H1, Level 2 is H2, etc.
+        PDOutlineNode[] lastItemAtLevel = new PDOutlineNode[10];
+        lastItemAtLevel[0] = outline;
+
+        for (List<Object> tocEntry : tocData) {
+            if (tocEntry.size() < 3) continue;
+
+            try {
+                // Parse Docling's array: [level, "Title", pageNumber]
+                int level = ((Number) tocEntry.get(0)).intValue();
+                String title = (String) tocEntry.get(1);
+                int pageNum = ((Number) tocEntry.get(2)).intValue();
+
+                // Create the visual bookmark
+                PDOutlineItem bookmark = new PDOutlineItem();
+                bookmark.setTitle(title.trim());
+
+                // Create the clickable destination
+                // Note: Docling page numbers are usually 1-based, PDFBox is 0-based
+                int pdfBoxPageIndex = pageNum - 1;
+                if (pdfBoxPageIndex >= 0 && pdfBoxPageIndex < pdfDocument.getNumberOfPages()) {
+                    PDPageFitWidthDestination dest = new PDPageFitWidthDestination();
+                    dest.setPage(pdfDocument.getPage(pdfBoxPageIndex));
+                    bookmark.setDestination(dest);
+                }
+
+                // Find the correct parent to attach this bookmark to
+                PDOutlineNode parent = outline; // Default to root
+                // Search backwards to find the nearest valid parent
+                for (int i = level - 1; i >= 0; i--) {
+                    if (lastItemAtLevel[i] != null) {
+                        parent = lastItemAtLevel[i];
+                        break;
+                    }
+                }
+
+                // Attach it to the tree
+                parent.addLast(bookmark);
+
+                // Update our tracker for this level
+                lastItemAtLevel[level] = bookmark;
+
+                // Clear out any deeper levels so H3 doesn't accidentally attach to an old H2
+                for (int i = level + 1; i < lastItemAtLevel.length; i++) {
+                    lastItemAtLevel[i] = null;
+                }
+
+            } catch (Exception e) {
+                System.err.println("Skipped malformed TOC entry: " + e.getMessage());
+            }
+        }
     }
 
     //Then now the final looping

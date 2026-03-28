@@ -1,10 +1,8 @@
-package com.sample.pdfautotagging.models;
+package com.sample.pdfautotagging.models.pdf;
 
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
-
-import java.util.Objects;
 
 @Getter
 @Setter
