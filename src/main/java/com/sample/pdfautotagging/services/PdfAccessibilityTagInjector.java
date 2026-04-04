@@ -572,9 +572,9 @@ public class PdfAccessibilityTagInjector {
     PDDocumentCatalog documentCatalog = pdfDocument.getDocumentCatalog();
 
     //We want to get the catalog
-        // 1. Set the Language (Fixes veraPDF Rule 7.2.29)
-        // You can hardcode "en-US" or pull it from your app config
-        documentCatalog.setLanguage("en-US");
+        //Lets get the Language from the Document if not
+
+//        Let the document use its default Language
 
     //Set the Standard Document Information Dictionary
         PDDocumentInformation pdDocumentInformation = pdfDocument.getDocumentInformation();

@@ -26,5 +26,7 @@ COPY --from=builder /app/target/*.jar app.jar
 # Expose the standard Spring Boot port
 EXPOSE 8080
 
-# Start the application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Start the application with more Heap Memory of up to 4GB  for PDF usage
+#To avoid OutOfMemoryError
+#java -Xms4G -Xmx4G -jar app.jar
+ENTRYPOINT ["java","-Xms4G","-Xmx4G", "-jar", "app.jar"]

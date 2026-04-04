@@ -1,0 +1,26 @@
+
+
+spring:
+  application:
+    name: PDFAutoTagging
+  servlet:
+    multipart:
+      max-file-size: -1
+      max-request-size: -1
+  h2:
+    console:
+      enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: update
+  datasource:
+    url: jdbc:h2:file:${H2_DATABASE_FOLDER}/pdf-job-queue
+    username: admin
+    password: admin
+
+
+
+server:
+  port: 8080
+# We want to handle setting up H2
+

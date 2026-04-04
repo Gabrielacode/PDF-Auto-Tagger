@@ -19,17 +19,15 @@ public class PdfAccessibilityTaggingController {
     private final PDFAccessibilityTaggingService pdfAccessibilityTaggingService;
 
 
-    @PostMapping(value = "/tag-pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/register-pdf-job", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> tagPdf(
             @RequestParam("pdfFile") MultipartFile pdfFile,
             @RequestParam("jsonFile") MultipartFile jsonFile,
             @RequestParam(value = "skipMarkedFiles", defaultValue = "false") boolean skipMarkedFiles
     ){
-        log.info("Request came through");
 
-        var result =  pdfAccessibilityTaggingService.tagPdf(pdfFile,jsonFile,skipMarkedFiles);
-        log.info("Request Ended");
-        return  result;
+
+        return pdfAccessibilityTaggingService.registerPdfJob(pdfFile, jsonFile, skipMarkedFiles);
     }
 
 }
