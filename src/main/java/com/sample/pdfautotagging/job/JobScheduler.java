@@ -68,6 +68,7 @@ public class JobScheduler {
     public void processPdfJob(PdfJob pdfJob){
         //We would submit the task to the executor
         Runnable runnable = () -> {
+            log.info("Starting Processing for Job with Id {}",pdfJob.getJobId());
             try {
                 pdfAccessibilityTaggingService.tagPdf(pdfJob);
                 //After we would set it to completed in the db
@@ -79,12 +80,13 @@ public class JobScheduler {
                 pdfJob.setErrorMessage(e.getMessage());
             }finally {
                 //TODO Discuss how the file will be sent to the other services
-                //And whether it  will be used 
+                //And whether it  will be used
                 try {
                     pdfJobRepository.save(pdfJob);
                 } catch (Exception ignored) {
 
                 }
+                log.info("Finishing Processing for Job with Id {}",pdfJob.getJobId());
             }
         };
         threadPoolExecutor.execute(runnable);

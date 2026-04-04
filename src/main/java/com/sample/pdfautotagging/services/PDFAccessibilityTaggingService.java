@@ -65,7 +65,7 @@ public class PDFAccessibilityTaggingService {
         try {
             //We would then ensure the job download directory is created
             if (!Files.exists(jobDownloadPath)) {
-                Files.createDirectory(jobDownloadPath);
+                Files.createDirectories(jobDownloadPath);
             }
             saveToFilePath(pdfFilePath,pdfFile.getInputStream());
             saveToFilePath(jsonFilePath,jsonFile.getInputStream());
@@ -88,6 +88,7 @@ public class PDFAccessibilityTaggingService {
             return  ResponseEntity.ok(newResultHashMap);
         } catch (Exception e) {
 
+            log.error("Error from Job Processing {}",e.getMessage(),e);
             //If it fails we would have to quicly delete the directory to avoid stale files that have no job in the DB
             try{
                 Files.deleteIfExists(jobDownloadPath);
@@ -115,8 +116,8 @@ public class PDFAccessibilityTaggingService {
         Path pdfOutputPath = jobOutputDownloadPath.resolve("outputPdf.pdf");
 
         //We would just create the directory
-        if(Files.exists(jobOutputDownloadPath)){
-            Files.createDirectory(jobOutputDownloadPath);
+        if(!Files.exists(jobOutputDownloadPath)){
+            Files.createDirectories(jobOutputDownloadPath);
         }
 
         //Convert them to thier appropraite files

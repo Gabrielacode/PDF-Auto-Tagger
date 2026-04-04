@@ -74,10 +74,12 @@ public class PdfAccessibilityTagInjector {
 
     public List<Object> injectAccessibilityTokensForText(int pageIndex) throws IOException {
         //We will parse the whole page
-        //Then create  new ListThat we will inject for
         pdfStreamParser = new PDFStreamParser(pdfDocument.getPage(pageIndex));
-        List<Object> newPdfObjectList = new ArrayList<>();
         var listOfTokens = pdfStreamParser.parse();
+
+        // Pre-size it to be slightly larger than the old list so it never has to resize!
+        // Since Java Array Lists also creates new array and resizes it if it is full
+        List<Object> newPdfObjectList = new ArrayList<>((int) (listOfTokens.size() * 2.5));
 
         //We want to keep track of the images
         var currentPageJson = pdfJsonData.getPages().get(pageIndex);
@@ -85,229 +87,211 @@ public class PdfAccessibilityTagInjector {
                 .filter(box -> "picture".equalsIgnoreCase(box.getBoxclass()))
                 .toList();
         int currentPictureIndex = 0;
+
+        // Memory Optimization Cache common operators as local variables to avoid Map lookups in the tight loop
+        final Operator bdcOperator = Operator.getOperator("BDC");
+        final Operator bmcOperator = Operator.getOperator("BMC");
+        final Operator emcOperator = Operator.getOperator("EMC");
+
         //We loop through the List
         for(Object token :  listOfTokens){
-            //Are you  a not an operator
-            //If you are not , we will just add you to the new List
+            //If you are not an operator, we will just add you to the new List
             if(!(token instanceof Operator operator)){
-                //We will just add you to the List'
                 newPdfObjectList.add(token);
                 continue;
             }
-            //Now we want to check for
-            //A . BT if Bt ,we set the line index to 0 and then add it to our list
-            // B . If is ET , we increment our text block index and then add it to our new list
-            //If Tj ,TJ , ' ," , we will have to get the corrsponding box from the line in the current index
-            //If it is empty , we add the operator to the list , and then increment the line index
-            //If it is not empty , we get the Box for the current line , then we
-            //Convert the box class to the appropraite PDF tag ,
-            //Then we Do thei we put the tag first
-            //Then the MCID dictionary, with the current mcid index ,
-            //Then BDC operator that is in PDF
-            // Then put the COS String
-            //And then the Tj Operator
-            //Then the EMC
-            //Then add the corresponding mcid number to the Box
-            //Then increment the line index
-            //If it any other operator we just Add it for now
-            else{
-                switch (operator.getName()) {
-                    case "BT":
-                        textLineIndex =0;
-                        newPdfObjectList.add(operator);
-                        break;
-                    case "ET":
-                        textBlockIndex++;
-                        newPdfObjectList.add(operator);
-                        break;
-                    case "Tj":
-                    case "TJ":
-                    case "'":
-                    case "\"":
-                        var currentTextBlock = taggingMappingEngines.get(pageIndex).listOfPdfTextBlocksInThePage.get((int) textBlockIndex);
-                        var currentTextLine = currentTextBlock.getTextLines().get((int) textLineIndex);
 
-                        if(currentTextLine.getTheBoxsYouBelongTo().isEmpty()){
-                            // No Box was assigned to you, skip and increment
-                            //We want to  make it Artifact so that we could tell the PDF reader to ignore it
-                            //By popping the necessary
-                            List<Object> operandsToRestore = new ArrayList<>();
-                            if (operator.getName().equals("\"")) {
-                                //We pop 3 here
-                                Object op3 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                Object op2 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                operandsToRestore.add(op1);
-                                operandsToRestore.add(op2);
-                                operandsToRestore.add(op3);
-                            } else {
-                                //Else we pop one
-                                operandsToRestore.add(newPdfObjectList.remove(newPdfObjectList.size() - 1));
-                            }
+            switch (operator.getName()) {
+                case "BT":
+                    textLineIndex = 0;
+                    newPdfObjectList.add(operator);
+                    break;
+                case "ET":
+                    textBlockIndex++;
+                    newPdfObjectList.add(operator);
+                    break;
+                case "Tj":
+                case "TJ":
+                case "'":
+                case "\"":
+                    var currentTextBlock = taggingMappingEngines.get(pageIndex).listOfPdfTextBlocksInThePage.get((int) textBlockIndex);
+                    var currentTextLine = currentTextBlock.getTextLines().get((int) textLineIndex);
 
-                            // 2. Wrap the text in an Artifact block!
+                    if(currentTextLine.getTheBoxsYouBelongTo().isEmpty()){
+                        // No Box was assigned to you, skip and increment
+                        // Wrap the text in an Artifact block!
+
+                        if (operator.getName().equals("\"")) {
+                            //We pop 3 here
+                            Object op3 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                            Object op2 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                            Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+
                             newPdfObjectList.add(COSName.ARTIFACT);
-                            newPdfObjectList.add(Operator.getOperator("BMC")); // BMC doesn't need a dictionary!
-                            //It is just a wrapper
+                            newPdfObjectList.add(bmcOperator);
 
-                            newPdfObjectList.addAll(operandsToRestore);
-                            newPdfObjectList.add(operator);
-
-                            newPdfObjectList.add(Operator.getOperator("EMC")); // Close the Artifact
-
-                            textLineIndex++;
-                            break;
-
+                            // Add operands directly!
+                            newPdfObjectList.add(op1);
+                            newPdfObjectList.add(op2);
+                            newPdfObjectList.add(op3);
                         } else {
-                            var box = currentTextLine.getTheBoxsYouBelongTo().get(0);
+                            //Else we pop one
+                            Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
 
-                            var mappedHeadings = pagesAndThierMappedHeadersFonts.get(pageIndex);
-                            var pdfTag = translateBoxClassToPdfTag(box, mappedHeadings);
+                            newPdfObjectList.add(COSName.ARTIFACT);
+                            newPdfObjectList.add(bmcOperator);
 
+                            // Add operand directly!
+                            newPdfObjectList.add(op1);
+                        }
 
-                            // Use setInt for MCID, it is the strict PDF standard
-                            var mcidDictionary  = new COSDictionary();
-                            mcidDictionary.setInt(COSName.MCID, (int) countOfMCIDS);
+                        newPdfObjectList.add(operator);
+                        newPdfObjectList.add(emcOperator); // Close the Artifact
 
-                            var bdcOperator = Operator.getOperator("BDC");
-                            var emcOperator = Operator.getOperator("EMC");
+                        textLineIndex++;
+                        break;
 
-                            // FIX #1: Safely pop the correct number of operands
-                            List<Object> operandsToRestore = new ArrayList<>();
-                            if (operator.getName().equals("\"")) {
-                                // The " operator takes exactly 3 operands. Pop them in reverse!
-                                Object op3 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                Object op2 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-                                operandsToRestore.add(op1);
-                                operandsToRestore.add(op2);
-                                operandsToRestore.add(op3);
-                            } else {
-                                // Tj, TJ, and '  and Dotake exactly 1 operand
-                                operandsToRestore.add(newPdfObjectList.remove(newPdfObjectList.size() - 1));
-                            }
+                    } else {
+                        var box = currentTextLine.getTheBoxsYouBelongTo().get(0);
+                        var mappedHeadings = pagesAndThierMappedHeadersFonts.get(pageIndex);
+                        var pdfTag = translateBoxClassToPdfTag(box, mappedHeadings);
 
-                            // FIX #2: Add them flatly to the stream, NOT as a nested List!
+                        // Use setInt for MCID, it is the strict PDF standard
+                        var mcidDictionary  = new COSDictionary();
+                        mcidDictionary.setInt(COSName.MCID, (int) countOfMCIDS);
+
+                        if (operator.getName().equals("\"")) {
+                            // The " operator takes exactly 3 operands. Pop them in reverse!
+                            Object op3 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                            Object op2 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                            Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+
                             newPdfObjectList.add(COSName.getPDFName(pdfTag));
                             newPdfObjectList.add(mcidDictionary);
                             newPdfObjectList.add(bdcOperator);
 
-                            newPdfObjectList.addAll(operandsToRestore); // Restore the strings/numbers
-                            newPdfObjectList.add(operator);             // Restore the Tj/"/'/TJ
-                            newPdfObjectList.add(emcOperator);          // Close the tag
-
-                            // Add it to the box mcid list
-                            box.getAssignedMcids().add((int) countOfMCIDS);
-                            //Assign it also to the text line
-                            currentTextLine.setAssignedMcid((int) countOfMCIDS);
-                            countOfMCIDS++;
-                            textLineIndex++;
-                        }
-
-                        break;
-                        //For Images
-
-                    case "Do":
-                        //  Pop the single operand (the XObject name, e.g., /Im1)
-                        Object imageOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
-
-                        //  Check if we have a mapped Docling picture box for this image
-                        if (currentPictureIndex < pictureBoxes.size()) {
-                            Box picBox = pictureBoxes.get(currentPictureIndex);
-
-                            // Set up the MCID dictionary
-                            var mcidDictionary = new COSDictionary();
-                            mcidDictionary.setInt(COSName.MCID, (int) countOfMCIDS);
-
-                            // Wrap in a <Figure> BDC tag
-                            newPdfObjectList.add(COSName.getPDFName(StandardStructureTypes.Figure));
-                            newPdfObjectList.add(mcidDictionary);
-                            newPdfObjectList.add(Operator.getOperator("BDC"));
-
-                            // Restore the operand and the "Do" operator
-                            newPdfObjectList.add(imageOperand);
-                            newPdfObjectList.add(operator);
-
-                            // Close the tag
-                            newPdfObjectList.add(Operator.getOperator("EMC"));
-
-                            // Safely initialize the MCID list for the Box if Docling left it null
-                            if (picBox.getAssignedMcids() == null) {
-                                picBox.setAssignedMcids(new ArrayList<>());
-                            }
-                            // Assign the MCID to the picture Box so Pass 3 can find it
-                            picBox.getAssignedMcids().add((int) countOfMCIDS);
-
-                            countOfMCIDS++;
-                            currentPictureIndex++;
+                            // Add operands directly!
+                            newPdfObjectList.add(op1);
+                            newPdfObjectList.add(op2);
+                            newPdfObjectList.add(op3);
                         } else {
-                            // THE ARTIFACT SWEEPER (For extra/decorative images)
-                            // Docling didn't map this, so hide it from the screen reader!
-                            newPdfObjectList.add(COSName.ARTIFACT);
-                            newPdfObjectList.add(Operator.getOperator("BMC")); // No dictionary needed
+                            // Tj, TJ, and ' take exactly 1 operand
+                            Object op1 = newPdfObjectList.remove(newPdfObjectList.size() - 1);
 
-                            newPdfObjectList.add(imageOperand);
-                            newPdfObjectList.add(operator);
+                            newPdfObjectList.add(COSName.getPDFName(pdfTag));
+                            newPdfObjectList.add(mcidDictionary);
+                            newPdfObjectList.add(bdcOperator);
 
-                            newPdfObjectList.add(Operator.getOperator("EMC"));
+                            // Add operand directly!
+                            newPdfObjectList.add(op1);
                         }
-                        break;
-                    // Table borders, background colors, and decorative lines.
-                    //They all need to be marked
 
-                    case "S":   // Stroke path
-                    case "s":   // Close and stroke path
-                    case "f":   // Fill path
-                    case "F":   // Fill path (obsolete but still used)
-                    case "f*":  // Fill path (even-odd rule)
-                    case "B":   // Fill and stroke path
-                    case "B*":  // Fill and stroke path (even-odd rule)
-                    case "b":   // Close, fill, and stroke path
-                    case "b*":  // Close, fill, and stroke path (even-odd rule)
-                    case "n":   // End path without filling or stroking
+                        newPdfObjectList.add(operator);             // Restore the Tj/"/'/TJ
+                        newPdfObjectList.add(emcOperator);          // Close the tag
 
-                        // These operators take ZERO operands! Just wrap them in a BMC Artifact block.
-                        newPdfObjectList.add(COSName.ARTIFACT);
-                        newPdfObjectList.add(Operator.getOperator("BMC"));
+                        // Add it to the box mcid list
+                        box.getAssignedMcids().add((int) countOfMCIDS);
+                        //Assign it also to the text line
+                        currentTextLine.setAssignedMcid((int) countOfMCIDS);
+                        countOfMCIDS++;
+                        textLineIndex++;
+                    }
 
-                        newPdfObjectList.add(operator); // The painting operator (S, f, B, etc.)
+                    break;
 
-                        newPdfObjectList.add(Operator.getOperator("EMC"));
-                        break;
+                //For Images
+                case "Do":
+                    //  Pop the single operand (the XObject name, e.g., /Im1)
+                    Object imageOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
 
-                    case "sh": // Shading (Gradients)
-                        // Shading takes exactly 1 operand (the shading dictionary name)
-                        //And still need to be marked
-                        Object shadingOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+                    //  Check if we have a mapped Docling picture box for this image
+                    if (currentPictureIndex < pictureBoxes.size()) {
+                        Box picBox = pictureBoxes.get(currentPictureIndex);
 
-                        newPdfObjectList.add(COSName.ARTIFACT);
-                        newPdfObjectList.add(Operator.getOperator("BMC"));
+                        // Set up the MCID dictionary
+                        var mcidDictionary = new COSDictionary();
+                        mcidDictionary.setInt(COSName.MCID, (int) countOfMCIDS);
 
-                        newPdfObjectList.add(shadingOperand);
+                        // Wrap in a <Figure> BDC tag
+                        newPdfObjectList.add(COSName.getPDFName(StandardStructureTypes.Figure));
+                        newPdfObjectList.add(mcidDictionary);
+                        newPdfObjectList.add(bdcOperator);
+
+                        // Restore the operand and the "Do" operator
+                        newPdfObjectList.add(imageOperand);
                         newPdfObjectList.add(operator);
 
-                        newPdfObjectList.add(Operator.getOperator("EMC"));
-                        break;
-                    default:
+                        // Close the tag
+                        newPdfObjectList.add(emcOperator);
+
+                        // Safely initialize the MCID list for the Box if Docling left it null
+                        if (picBox.getAssignedMcids() == null) {
+                            picBox.setAssignedMcids(new ArrayList<>());
+                        }
+                        // Assign the MCID to the picture Box so Pass 3 can find it
+                        picBox.getAssignedMcids().add((int) countOfMCIDS);
+
+                        countOfMCIDS++;
+                        currentPictureIndex++;
+                    } else {
+                        // THE ARTIFACT SWEEPER (For extra/decorative images)
+                        // Docling didn't map this, so hide it from the screen reader!
+                        newPdfObjectList.add(COSName.ARTIFACT);
+                        newPdfObjectList.add(bmcOperator); // No dictionary needed
+
+                        newPdfObjectList.add(imageOperand);
                         newPdfObjectList.add(operator);
-                        break;
 
+                        newPdfObjectList.add(emcOperator);
+                    }
+                    break;
 
+                // Table borders, background colors, and decorative lines.
+                case "S":   // Stroke path
+                case "s":   // Close and stroke path
+                case "f":   // Fill path
+                case "F":   // Fill path (obsolete but still used)
+                case "f*":  // Fill path (even-odd rule)
+                case "B":   // Fill and stroke path
+                case "B*":  // Fill and stroke path (even-odd rule)
+                case "b":   // Close, fill, and stroke path
+                case "b*":  // Close, fill, and stroke path (even-odd rule)
+                case "n":   // End path without filling or stroking
 
+                    // These operators take ZERO operands! Just wrap them in a BMC Artifact block.
+                    newPdfObjectList.add(COSName.ARTIFACT);
+                    newPdfObjectList.add(bmcOperator);
 
+                    newPdfObjectList.add(operator); // The painting operator (S, f, B, etc.)
 
+                    newPdfObjectList.add(emcOperator);
+                    break;
 
-                }
+                case "sh": // Shading (Gradients)
+                    // Shading takes exactly 1 operand (the shading dictionary name)
+                    Object shadingOperand = newPdfObjectList.remove(newPdfObjectList.size() - 1);
+
+                    newPdfObjectList.add(COSName.ARTIFACT);
+                    newPdfObjectList.add(bmcOperator);
+
+                    newPdfObjectList.add(shadingOperand);
+                    newPdfObjectList.add(operator);
+
+                    newPdfObjectList.add(emcOperator);
+                    break;
+
+                default:
+                    newPdfObjectList.add(operator);
+                    break;
             }
         }
 
-        //Then we  return the new parsed list
         //And reset it
-        countOfMCIDS =0;
-        textBlockIndex =0;
-        textLineIndex =0;
-        return newPdfObjectList;
+        countOfMCIDS = 0;
+        textBlockIndex = 0;
+        textLineIndex = 0;
 
+        return newPdfObjectList;
     }
 
     public void writeToPdfPage (PDDocument pdfDocument,int index,List<Object> modifiedTokens ){

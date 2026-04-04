@@ -13,7 +13,9 @@ import org.apache.pdfbox.text.TextPosition;
 import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -26,7 +28,8 @@ public class TaggingMappingEngine  extends PDFTextStripper {
     private Operator currentOperator;
     //We want to keep track of the Page we currently editing
     final Page page;
-
+    //We will have to precalculate the boxes , so that we dont create rectangles for each character that is to be proceesed
+    private final Map<Box, Rectangle2D.Float> precalculatedBoxRectangles = new HashMap<>();
     public PdfTextBlock currentPdfTextBlock = null;
     public List<PdfTextBlock> listOfPdfTextBlocksInThePage;
 
@@ -42,6 +45,20 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
         //
         setSortByPosition(false);
+        //Precaculate the box rectangles
+
+        // PRE-CALCULATE ALL BOXES ONCE!
+        if (page.getBoxes() != null) {
+            for (Box box : page.getBoxes()) {
+                Rectangle2D.Float rect = new Rectangle2D.Float(
+                        (float) box.getX0(),
+                        (float) box.getY0(),
+                        (float) (box.getX1() - box.getX0()),
+                        (float) (box.getY1() - box.getY0())
+                );
+                precalculatedBoxRectangles.put(box, rect);
+            }
+        }
     }
 
     //This will be called on each operator , since PDF uses the Post Fix Notation
@@ -154,19 +171,10 @@ public class TaggingMappingEngine  extends PDFTextStripper {
 
     }
 
-    boolean isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(Box jsonBox , Rectangle2D charBox){
-       //We would just need to check if the start x , is below or equal the start x of the origin
-        //Do the same for
-
-        Rectangle2D.Float jsonBoundingBox = new  Rectangle2D.Float(
-                (float) jsonBox.getX0(),
-                (float) jsonBox.getY0(),
-                (float) (jsonBox.getX1()-jsonBox.getX0()),
-                (float)(jsonBox.getY1()-jsonBox.getY0())
-        );
-        return  jsonBoundingBox.contains(charBox);
-
+    boolean isThereAnIntersectionOrContainmentBetweenJsonBoxAndCharBox(Box jsonBox, Rectangle2D charBox) {
+        // Instead of 'new Rectangle2D.Float()', just grab it from the map!
+        Rectangle2D.Float jsonBoundingBox = precalculatedBoxRectangles.get(jsonBox);
+        return jsonBoundingBox != null && jsonBoundingBox.contains(charBox);
     }
-
 
 }

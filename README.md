@@ -41,6 +41,18 @@ curl -X POST http://localhost:8080/api/v1/accessibility/tag-pdf \
   -F "skipMarkedFiles=true" --output tagged_document.pdf
 
 ```
+
+##  Environmental Variables 
+| Variable                            | Description                                                |
+|:------------------------------------|:-----------------------------------------------------------|
+| `H2_DATABASE_FOLDER`                | `Folder where the H2 File Database will reside`            |
+| `JOB_DOWNLOAD_FOLDER`               | `Folder where PDF Jobs input and output files will reside` |
+
+##  Job Scheduling
+
+Jobs are scheduled for every PDF Tagging request. The Job Id is returned and can be used to track the status of the Job 
+H2 File Database is used to store information on each Job and the location of its files 
+
 ##  Docker Deployment
 
 The project includes a highly optimized, multi-stage Dockerfile.
