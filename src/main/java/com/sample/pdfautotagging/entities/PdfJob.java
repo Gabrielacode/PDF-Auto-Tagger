@@ -25,6 +25,9 @@ public class PdfJob {
     //Then the file path for the PDF and the JSON
     String pdfFilePath;
     String jsonFilePath;
+    //The callback Url
+    String callbackUrl;
+    String outputPdfFilePath;
     //Then the status of the Job
     //We would have PENDING, PROCESSING COMPLETED,FAILED
     PdfJobStatus jobStatus;

@@ -26,11 +26,12 @@ The microservice exposes a single, powerful multipart endpoint to process docume
 
 **Request Type:** `multipart/form-data`
 
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `pdfFile` | `File` | Yes | The raw, untagged PDF document. |
-| `jsonFile` | `File` | Yes | The parsed layout JSON (e.g., from Docling) containing bounding boxes, text blocks, and the TOC array. |
-| `skipMarkedFiles`| `Boolean`| No | Defaults to `false`. If `true`, the engine checks the PDF's `MarkInfo` dictionary and instantly returns the file untouched if it is already tagged. |
+| Parameter         | Type      | Required | Description                                                                                                                                         |
+|:------------------|:----------| :--- |:----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `pdfFile`         | `File`    | Yes | The raw, untagged PDF document.                                                                                                                     |
+| `jsonFile`        | `File`    | Yes | The parsed layout JSON (e.g., from Docling) containing bounding boxes, text blocks, and the TOC array.                                              |
+| `callbackUrl`     | `String`   | Yes | The POST callback url to be used as the webhook for the response , This endpoint should accept a Multipart Form Data                                 |
+| `skipMarkedFiles` | `Boolean` | No | Defaults to `false`. If `true`, the engine checks the PDF's `MarkInfo` dictionary and instantly returns the file untouched if it is already tagged. |
 
 **cURL Example:**
 ```bash
@@ -38,8 +39,17 @@ curl -X POST http://localhost:8080/api/v1/accessibility/tag-pdf \
   -H "Content-Type: multipart/form-data" \
   -F "pdfFile=@/path/to/raw_document.pdf" \
   -F "jsonFile=@/path/to/docling_output.json" \
-  -F "skipMarkedFiles=true" --output tagged_document.pdf
+  -F "callbackUrl=https://enpoint.com/web-hook"\
+  -F "skipMarkedFiles=true" 
 
+```
+
+**Response Type**  
+ It returns the Job Id 
+```json
+{
+ "jobId": "123456788"
+}
 ```
 
 ##  Environmental Variables 
@@ -53,6 +63,21 @@ curl -X POST http://localhost:8080/api/v1/accessibility/tag-pdf \
 Jobs are scheduled for every PDF Tagging request. The Job Id is returned and can be used to track the status of the Job 
 H2 File Database is used to store information on each Job and the location of its files 
 
+## Response to the Webhook after Job Processing 
+After a Job has been processed ,  the following will be sent   
+**If Job completed successfully:**
+We return a multipart data  body that contains 
+```
+jobId: The Job Id (Text)
+pdfFile: The Pdf File Output (PDF File)  (application/pdf)
+```
+
+**If Job failed :**
+We return a multipart data  body that contains
+```
+jobId: The Job Id (Text)
+errorMessage : The Error Message (Text)
+```
 ##  Docker Deployment
 
 The project includes a highly optimized, multi-stage Dockerfile.

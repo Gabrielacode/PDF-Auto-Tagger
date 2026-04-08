@@ -7,12 +7,19 @@ import com.sample.pdfautotagging.services.PDFAccessibilityTaggingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.data.domain.Limit;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -82,7 +89,36 @@ public class JobScheduler {
                 //TODO Discuss how the file will be sent to the other services
                 //And whether it  will be used
                 try {
-                    pdfJobRepository.save(pdfJob);
+
+
+                     var savedJob = pdfJobRepository.save(pdfJob);
+                    //Then we will try to send  to the call back to it
+                    RestClient webClient = RestClient.builder().
+                            baseUrl(savedJob.getCallbackUrl())
+                            .build();
+                    //Then the message will be
+                    if(savedJob.getJobStatus() == PdfJobStatus.FAILED){
+
+
+                         MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
+                         multipartBodyBuilder.part("jobId",savedJob.getJobId(), MediaType.TEXT_PLAIN);
+                         multipartBodyBuilder.part("errorMessage",savedJob.getErrorMessage());
+
+                         var multipartBody = multipartBodyBuilder.build();
+                       var response =  webClient.post()
+                                .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(multipartBody);
+
+                    }else if (savedJob.getJobStatus() == PdfJobStatus.COMPLETED){
+                        MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
+                        multipartBodyBuilder.part("jobId",savedJob.getJobId(), MediaType.TEXT_PLAIN);
+                        multipartBodyBuilder.part("pdfFile",new FileSystemResource(pdfJob.getOutputPdfFilePath()),MediaType.APPLICATION_PDF);
+
+                        var multipartBody = multipartBodyBuilder.build();
+                        var response =  webClient.post()
+                                .contentType(MediaType.MULTIPART_FORM_DATA)
+                                .body(multipartBody);
+                    }
                 } catch (Exception ignored) {
 
                 }

@@ -23,11 +23,12 @@ public class PdfAccessibilityTaggingController {
     public ResponseEntity<?> tagPdf(
             @RequestParam("pdfFile") MultipartFile pdfFile,
             @RequestParam("jsonFile") MultipartFile jsonFile,
+            @RequestParam("callbackUrl")String callbackUrl,
             @RequestParam(value = "skipMarkedFiles", defaultValue = "false") boolean skipMarkedFiles
     ){
 
 
-        return pdfAccessibilityTaggingService.registerPdfJob(pdfFile, jsonFile, skipMarkedFiles);
+        return pdfAccessibilityTaggingService.registerPdfJob(pdfFile, jsonFile, skipMarkedFiles, callbackUrl);
     }
 
 }

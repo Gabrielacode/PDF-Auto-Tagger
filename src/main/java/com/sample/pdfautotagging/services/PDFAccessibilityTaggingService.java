@@ -53,7 +53,7 @@ public class PDFAccessibilityTaggingService {
         }
         Files.copy(inputStream, outputPath, StandardCopyOption.REPLACE_EXISTING);
     }
-    public ResponseEntity<?> registerPdfJob(MultipartFile pdfFile , MultipartFile jsonFile, boolean shouldSkipMarkedFiles){
+    public ResponseEntity<?> registerPdfJob(MultipartFile pdfFile , MultipartFile jsonFile, boolean shouldSkipMarkedFiles, String callbackUrl){
         //Here we would want to download the files into  the service file system
         //After generating the job id
         UUID jobId = UUID.randomUUID();
@@ -77,6 +77,7 @@ public class PDFAccessibilityTaggingService {
             pdfJob.setPdfFilePath(pdfFilePath.toString());
             pdfJob.setJsonFilePath(jsonFilePath.toString());
             pdfJob.setJobStatus(PdfJobStatus.PENDING);
+            pdfJob.setCallbackUrl(callbackUrl);
             pdfJob.setShouldSkipTaggedFile(shouldSkipMarkedFiles);
 
             pdfJobRepository.save(pdfJob);
@@ -191,6 +192,9 @@ public class PDFAccessibilityTaggingService {
             //Then we save the new PDF Document to  the file
 
              pdfDocument.save(pdfOutputPath.toAbsolutePath().toString());
+
+             //Then we would set the path to it
+            pdfJob.setOutputPdfFilePath(pdfOutputPath.toAbsolutePath().toString());
 
 
         }
