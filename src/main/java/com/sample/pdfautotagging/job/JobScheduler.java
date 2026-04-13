@@ -1,5 +1,6 @@
 package com.sample.pdfautotagging.job;
 
+import com.sample.pdfautotagging.encryption.HmacUtil;
 import com.sample.pdfautotagging.entities.PdfJob;
 import com.sample.pdfautotagging.entities.PdfJobStatus;
 import com.sample.pdfautotagging.repositories.PdfJobRepository;
@@ -30,13 +31,16 @@ import java.util.concurrent.RejectedExecutionException;
 public class JobScheduler {
     private final PDFAccessibilityTaggingService pdfAccessibilityTaggingService;
     private final PdfJobRepository pdfJobRepository;
+    private final HmacUtil hmacUtil;
+
 
 
     private final Executor threadPoolExecutor;
 
-    public JobScheduler(PDFAccessibilityTaggingService pdfAccessibilityTaggingService, PdfJobRepository pdfJobRepository, @Qualifier("pdfJobQueueExecutor") Executor threadPoolExecutor) {
+    public JobScheduler(PDFAccessibilityTaggingService pdfAccessibilityTaggingService, PdfJobRepository pdfJobRepository, HmacUtil hmacUtil, @Qualifier("pdfJobQueueExecutor") Executor threadPoolExecutor) {
         this.pdfAccessibilityTaggingService = pdfAccessibilityTaggingService;
         this.pdfJobRepository = pdfJobRepository;
+        this.hmacUtil = hmacUtil;
         this.threadPoolExecutor = threadPoolExecutor;
     }
 
@@ -93,6 +97,16 @@ public class JobScheduler {
 
                      var savedJob = pdfJobRepository.save(pdfJob);
                     //Then we will try to send  to the call back to it
+
+                    //We want to get the token from the call back url
+                    var callBackUrl = savedJob.getCallbackUrl();
+                    var token =  hmacUtil.extractTokenFromUrl(callBackUrl);
+                    //Then we sign the token with the timestamp
+                    var timestamp = String.valueOf(System.currentTimeMillis());
+                    var payload = token+"|"+timestamp;
+
+                    var signedHeader = hmacUtil.signToken(payload);
+                    //We will attach the headers for the signature and the timestamp
                     RestClient webClient = RestClient.builder().
                             baseUrl(savedJob.getCallbackUrl())
                             .build();
@@ -106,6 +120,8 @@ public class JobScheduler {
 
                          var multipartBody = multipartBodyBuilder.build();
                        var response =  webClient.post()
+                               .header("X-Timestamp",timestamp)
+                               .header("X-Signature",signedHeader)
                                 .contentType(MediaType.MULTIPART_FORM_DATA)
                         .body(multipartBody);
 
@@ -116,8 +132,23 @@ public class JobScheduler {
 
                         var multipartBody = multipartBodyBuilder.build();
                         var response =  webClient.post()
+                                .header("X-Timestamp",timestamp)
+                                .header("X-Signature",signedHeader)
                                 .contentType(MediaType.MULTIPART_FORM_DATA)
-                                .body(multipartBody);
+                                .body(multipartBody)
+                                .retrieve()
+                                .toBodilessEntity();
+
+                        //If the job was completed  after a successfully status code , we would delete all the files in the folder
+                        if(response.getStatusCode().is2xxSuccessful()){
+                             var result = pdfAccessibilityTaggingService.deleteJobFolder(savedJob.getJobId());
+                             if(result){
+                                 log.info(" Successfully deleted folder with Job Id {} ",savedJob.getJobId());
+                             }else {
+                                 log.error(" Failed to  deleted folder with Job Id {} ",savedJob.getJobId());
+                             }
+                        }
+
                     }
                 } catch (Exception ignored) {
 

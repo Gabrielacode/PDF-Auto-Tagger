@@ -22,6 +22,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
@@ -105,6 +106,18 @@ public class PDFAccessibilityTaggingService {
 
     }
 
+    public boolean deleteJobFolder (String jobId){
+        try{
+            Path jobDownloadPath = Path.of(jobDownloadFolder, "jobs", jobId);
+            //We are expecting this to be a directory
+
+             var isDeleted =FileSystemUtils.deleteRecursively(jobDownloadPath);
+             return isDeleted;
+        } catch (IOException e) {
+            log.error("Failed to delete Joob Folder for Job Id {}", jobId);
+        }
+        return false;
+    }
     //We now going to change this to take in a job
 
     public void  tagPdf(PdfJob pdfJob) throws Exception {

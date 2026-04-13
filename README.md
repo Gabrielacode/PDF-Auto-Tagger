@@ -57,6 +57,8 @@ curl -X POST http://localhost:8080/api/v1/accessibility/tag-pdf \
 |:------------------------------------|:-----------------------------------------------------------|
 | `H2_DATABASE_FOLDER`                | `Folder where the H2 File Database will reside`            |
 | `JOB_DOWNLOAD_FOLDER`               | `Folder where PDF Jobs input and output files will reside` |
+| `MICROSERVICE_SECRET_KEY`               | `HMAC SECRET KEY FROM TEAM`                                 |
+
 
 ##  Job Scheduling
 
