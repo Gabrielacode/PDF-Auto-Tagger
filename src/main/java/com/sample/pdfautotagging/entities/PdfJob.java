@@ -2,6 +2,7 @@ package com.sample.pdfautotagging.entities;
 
 //This would be our job entity for keeping track of processed Jobs
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import lombok.AllArgsConstructor;
@@ -33,5 +34,8 @@ public class PdfJob {
     PdfJobStatus jobStatus;
     //And a simple error Message in case
     String errorMessage;
+    //This is the retry count for failed jobs
+    @Column(columnDefinition = "INTEGER DEFAULT 0")
+    int retryCount =0;
     boolean shouldSkipTaggedFile;
 }

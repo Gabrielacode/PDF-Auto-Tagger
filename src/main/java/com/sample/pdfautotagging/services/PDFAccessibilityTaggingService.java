@@ -1,9 +1,12 @@
 package com.sample.pdfautotagging.services;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sample.pdfautotagging.encryption.HmacUtil;
 import com.sample.pdfautotagging.entities.PdfJob;
 import com.sample.pdfautotagging.entities.PdfJobStatus;
+import com.sample.pdfautotagging.error.CustomException;
 import com.sample.pdfautotagging.error.ErrorResponse;
 import com.sample.pdfautotagging.models.json.PdfData;
 import com.sample.pdfautotagging.models.json.PdfExtractionResponse;
@@ -16,13 +19,18 @@ import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkInfo;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
@@ -30,6 +38,8 @@ import java.nio.file.CopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
 @Slf4j
@@ -42,10 +52,12 @@ public class PDFAccessibilityTaggingService {
     private final PdfJobRepository pdfJobRepository;
 
     private final String jobDownloadFolder;
+    private final HmacUtil hmacUtil;
 
-    public PDFAccessibilityTaggingService(PdfJobRepository pdfJobRepository, @Value("${JOB_DOWNLOAD_FOLDER}") String jobDownloadFolder) {
+    public PDFAccessibilityTaggingService(PdfJobRepository pdfJobRepository, @Value("${JOB_DOWNLOAD_FOLDER}") String jobDownloadFolder, HmacUtil hmacUtil) {
         this.pdfJobRepository = pdfJobRepository;
         this.jobDownloadFolder = jobDownloadFolder;
+        this.hmacUtil = hmacUtil;
     }
 
     public void  saveToFilePath(Path outputPath , InputStream inputStream) throws IOException {
@@ -93,7 +105,8 @@ public class PDFAccessibilityTaggingService {
             log.error("Error from Job Processing {}",e.getMessage(),e);
             //If it fails we would have to quicly delete the directory to avoid stale files that have no job in the DB
             try{
-                Files.deleteIfExists(jobDownloadPath);
+
+                deleteJobFolder(jobId.toString());
             } catch (Exception ignored) {
 
             }
@@ -114,11 +127,104 @@ public class PDFAccessibilityTaggingService {
              var isDeleted =FileSystemUtils.deleteRecursively(jobDownloadPath);
              return isDeleted;
         } catch (IOException e) {
-            log.error("Failed to delete Joob Folder for Job Id {}", jobId);
+            log.error("Failed to delete Job Folder for Job Id {}", jobId);
         }
         return false;
     }
     //We now going to change this to take in a job
+
+
+
+    @Retryable(
+            retryFor = {
+                    HttpClientErrorException.Unauthorized.class, HttpClientErrorException.UnprocessableEntity.class,
+                    ResourceAccessException.class,
+                    NoSuchAlgorithmException.class, InvalidKeyException.class
+            },
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 5000),
+            recover ="recoverFailure"
+    )
+    public void sendRequest(PdfJob savedJob) throws NoSuchAlgorithmException, InvalidKeyException {
+        //We want to get the token from the call back url
+        var callBackUrl = savedJob.getCallbackUrl();
+        var token = hmacUtil.extractTokenFromUrl(callBackUrl);
+        //Then we sign the token with the timestamp
+        var timestamp = String.valueOf(System.currentTimeMillis());
+        var payload = token + "|" + timestamp;
+
+        var signedHeader = hmacUtil.signToken(payload);
+        //We will attach the headers for the signature and the timestamp
+        RestClient webClient = RestClient.builder().
+                baseUrl(savedJob.getCallbackUrl())
+                .build();
+        //Then the message will be
+
+        ResponseEntity<Void> response;
+        if (savedJob.getJobStatus() == PdfJobStatus.FAILED) {
+            MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
+            multipartBodyBuilder.part("jobId", savedJob.getJobId(), MediaType.TEXT_PLAIN);
+            multipartBodyBuilder.part("errorMessage", savedJob.getErrorMessage());
+
+            var multipartBody = multipartBodyBuilder.build();
+            response = webClient.post()
+                    .header("X-Timestamp", timestamp)
+                    .header("X-Signature", signedHeader)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(multipartBody)
+                    .retrieve()
+                    .toBodilessEntity();
+
+        }
+        else if (savedJob.getJobStatus() == PdfJobStatus.COMPLETED) {
+            MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
+            multipartBodyBuilder.part("jobId", savedJob.getJobId(), MediaType.TEXT_PLAIN);
+            multipartBodyBuilder.part("pdfFile", new FileSystemResource(savedJob.getOutputPdfFilePath()), MediaType.APPLICATION_PDF);
+
+            var multipartBody = multipartBodyBuilder.build();
+            response = webClient.post()
+                    .header("X-Timestamp", timestamp)
+                    .header("X-Signature", signedHeader)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(multipartBody)
+                    .retrieve()
+                    .toBodilessEntity();
+        }
+        else {
+            response = null;
+        }
+        if(response == null) return;
+
+        //Then we want to check , if the response good is 200 , we proceed to clear the folder
+        //If the job was completed  after a successfully status code , we would delete all the files in the folder
+        if (response.getStatusCode().is2xxSuccessful()) {
+            var result = deleteJobFolder(savedJob.getJobId());
+            if (result) {
+                log.info(" Successfully deleted folder with Job Id {} ", savedJob.getJobId());
+            } else {
+                log.error(" Failed to  deleted folder with Job Id {} ", savedJob.getJobId());
+            }
+        }else if(response.getStatusCode().isSameCodeAs(HttpStatusCode.valueOf(404))){
+
+            //We also abort
+            var result = deleteJobFolder(savedJob.getJobId());
+            if (result) {
+                log.info(" Successfully deleted folder with Job Id {} ", savedJob.getJobId());
+            } else {
+                log.error(" Failed to  deleted folder with Job Id {} ", savedJob.getJobId());
+            }
+        }
+    }
+
+    //Then our recover method will be
+
+    @Recover()
+    public void recoverFailure(Exception exception , PdfJob pdfJob){
+        log.error("Failed to send info to the Main Service ",exception);
+    }
+        //If the retry fails we log it and just delete the folder
+
+
 
     public void  tagPdf(PdfJob pdfJob) throws Exception {
 //Tells PDFBox: "Use RAM for the DOM, but offload the heavy byte streams to a temp file"
@@ -140,9 +246,16 @@ public class PDFAccessibilityTaggingService {
 
         //We would need to make some checks first
         //1 Is the Json File or Pdf File Empty
+        if(!pdfFile.exists()){
+
+            log.error("Pdf File Doesnt Not Exist or Is Empty");
+            throw new  CustomException("Pdf File is Empty or doesn't exist",pdfJob.getJobId(),HttpStatus.BAD_REQUEST,"pdf-file-not-exist",null);
+        }
         if(!pdfFile.exists() || !jsonFile.exists()){
          //We throw an exception
-            throw  new RuntimeException("Pdf Or Json Files Dont Exist");
+            log.error("Json File Doesnt Not Exist or Is Empty");
+            throw new  CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support ",pdfJob.getJobId(),HttpStatus.INTERNAL_SERVER_ERROR,"json-file-not-exist",null);
+
         }
 
 
@@ -166,8 +279,21 @@ public class PDFAccessibilityTaggingService {
             ObjectMapper objectMapper = new ObjectMapper();
             objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-            PdfExtractionResponse jsonResponse = objectMapper.readValue(jsonFile, PdfExtractionResponse.class);
-            PdfData data = jsonResponse.getData();
+            PdfData data;
+            try {
+                PdfExtractionResponse jsonResponse = objectMapper.readValue(jsonFile, PdfExtractionResponse.class);
+                 data = jsonResponse.getData();
+            } catch (Exception e) {
+                log.error("Failed to process Json for this Job",e);
+                throw new  CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support ",pdfJob.getJobId(),HttpStatus.INTERNAL_SERVER_ERROR,"json-file-failed-to-deserialize",e);
+            }
+
+            //If null we remove or stop from here
+            if(data == null){
+                log.error("Failed to process Json for this Job");
+                throw new  CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support ",pdfJob.getJobId(),HttpStatus.INTERNAL_SERVER_ERROR,"json-file-failed-to-deserialize",null);
+            }
+
 
             //We would need to clean the document for any tags or others ,so we have a clean slate
 
@@ -175,10 +301,13 @@ public class PDFAccessibilityTaggingService {
             pdfDocumentTagAndMarkedContentCleaner.cleanDocument();
             //We don't want an empty pages JSON and an empty Page from the Document
             if(pdfDocument.getPages() == null || pdfDocument.getPages().getCount() <=0){
-                 throw  new IllegalStateException("PDF File doesn't have pages");
+//                 throw  new IllegalStateException("PDF File doesn't have pages");
+                log.error("PDF File doesn't have pages");
+                throw new  CustomException("PDF File has no pages , Please confirm the PDF file is in order",pdfJob.getJobId(),HttpStatus.BAD_REQUEST,"pdf-file-no-pages",null);
             }
             if(data.getPages() == null || data.getPages().isEmpty()) {
-                throw  new IllegalStateException("Json File doesn't have Pages corresponding to PDF Pages");
+                log.error("Json File doesn't have Pages corresponding to PDF Pages, Confirm");
+                throw new  CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support ",pdfJob.getJobId(),HttpStatus.INTERNAL_SERVER_ERROR,"json-file-page-mismatch-pdf-file-page",null);
             }
 
             //Then we  map each pdf Page
@@ -199,7 +328,7 @@ public class PDFAccessibilityTaggingService {
 
             //Then perform our accessibility injection of the document
             //Putting the necessary Structure Elements on teh Document
-            PdfAccessibilityTagInjector pdfAccessibilityTagInjector = new PdfAccessibilityTagInjector(data,pdfDocument,listOfMappedPagesInformation);
+            PdfAccessibilityTagInjector pdfAccessibilityTagInjector = new PdfAccessibilityTagInjector(data,pdfDocument,listOfMappedPagesInformation,pdfJob);
             pdfAccessibilityTagInjector.transformPDFDocumentAccessibility();
 
             //Then we save the new PDF Document to  the file

@@ -19,20 +19,14 @@ public class HmacUtil {
     }
 
     //This is our HMAC util class , for generating our hmac encryption from a token and a key
-    public String  signToken(String payload){
+    public String   signToken(String payload) throws NoSuchAlgorithmException, InvalidKeyException {
 
-        try{
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secretKey.getBytes(), "HmacSHA256"));
 
             //Then we will create the signed token
           var signedTokenBytes =   mac.doFinal(payload.getBytes());
             return Base64.getEncoder().encodeToString(signedTokenBytes);
-        } catch (InvalidKeyException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     // We would have to also extract the token

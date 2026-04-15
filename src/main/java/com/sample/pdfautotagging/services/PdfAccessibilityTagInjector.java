@@ -1,9 +1,12 @@
 package com.sample.pdfautotagging.services;
 
+import com.sample.pdfautotagging.entities.PdfJob;
+import com.sample.pdfautotagging.error.CustomException;
 import com.sample.pdfautotagging.models.pdf.FontStyle;
 import com.sample.pdfautotagging.models.pdf.PdfTextLine;
 import com.sample.pdfautotagging.models.pdf.TableCell;
 import com.sample.pdfautotagging.models.json.*;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.*;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
@@ -28,6 +31,7 @@ import org.apache.xmpbox.XMPMetadata;
 import org.apache.xmpbox.schema.DublinCoreSchema;
 import org.apache.xmpbox.schema.XMPBasicSchema;
 import org.apache.xmpbox.xml.XmpSerializer;
+import org.springframework.http.HttpStatus;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -35,6 +39,7 @@ import java.io.OutputStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 public class PdfAccessibilityTagInjector {
     //After we have mapped all the TextBlocks and the Text Lines of the Page we would need a way to inject the accessibility tags into the PDF Content Stream
     final PdfData pdfJsonData;
@@ -44,15 +49,17 @@ public class PdfAccessibilityTagInjector {
     final List<TaggingMappingEngine> taggingMappingEngines;
     long countOfMCIDS =0;
     long textBlockIndex =0;
+    PdfJob pdfJob;
     long textLineIndex =0;
     Map<Integer,Map<Double, String> >pagesAndThierMappedHeadersFonts;
 
 
      PDFStreamParser pdfStreamParser = null;
     public PdfAccessibilityTagInjector(PdfData data, PDDocument pdfDocument,
-                                       List<TaggingMappingEngine> taggingMappingEngines) {
+                                       List<TaggingMappingEngine> taggingMappingEngines,PdfJob pdfJob) {
         this.pdfJsonData = data;
         this.pdfDocument = pdfDocument;
+        this.pdfJob = pdfJob;
 
         this.taggingMappingEngines = taggingMappingEngines;
     }
@@ -300,7 +307,9 @@ public class PdfAccessibilityTagInjector {
             ContentStreamWriter tokenWriter = new ContentStreamWriter(out);
             tokenWriter.writeTokens(modifiedTokens);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+
+            log.error("Failed to Save Processed File to Output file ,",e );
+            throw new CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support ",pdfJob.getJobId(), HttpStatus.INTERNAL_SERVER_ERROR,"failed-to-save-pdf-file-to-output",e);
         }
 
         //Then we set the pd document pag e

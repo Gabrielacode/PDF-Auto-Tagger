@@ -3,21 +3,29 @@ package com.sample.pdfautotagging.job;
 import com.sample.pdfautotagging.encryption.HmacUtil;
 import com.sample.pdfautotagging.entities.PdfJob;
 import com.sample.pdfautotagging.entities.PdfJobStatus;
+import com.sample.pdfautotagging.error.CustomException;
 import com.sample.pdfautotagging.repositories.PdfJobRepository;
 import com.sample.pdfautotagging.services.PDFAccessibilityTaggingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.data.domain.Limit;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.MediaType;
+import org.springframework.http.*;
 import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +42,6 @@ public class JobScheduler {
     private final HmacUtil hmacUtil;
 
 
-
     private final Executor threadPoolExecutor;
 
     public JobScheduler(PDFAccessibilityTaggingService pdfAccessibilityTaggingService, PdfJobRepository pdfJobRepository, HmacUtil hmacUtil, @Qualifier("pdfJobQueueExecutor") Executor threadPoolExecutor) {
@@ -47,7 +54,7 @@ public class JobScheduler {
     //We would just have a Scheduler that will run after  the current jobs are done
     @Scheduled(fixedDelay = 3000)
 
-    public void queuePdfJobs(){
+    public void queuePdfJobs() {
         //Its job is to get pending jobs in the db and send them to be processed
         //If the queue we would not mark it
 
@@ -69,93 +76,82 @@ public class JobScheduler {
                 // The pool is full
                 // We just catch the error and do nothing.
                 // The job remains 'PENDING' in the DB and will be picked up on the next cycle.
-                log.error("Pool is full, leaving job {} in queue " ,job.getJobId());
+                log.error("Pool is full, leaving job {} in queue ", job.getJobId());
                 break; // Stop trying to submit the rest of the list
             }
         }
 
     }
 
-    public void processPdfJob(PdfJob pdfJob){
+    public void processPdfJob(PdfJob pdfJob) {
         //We would submit the task to the executor
         Runnable runnable = () -> {
-            log.info("Starting Processing for Job with Id {}",pdfJob.getJobId());
+
+            //We want to set the MDC
+            MDC.put("jobId", "[Job Id : " + pdfJob.getJobId() + "] ");
+            log.info("Starting Processing for Job with Id {}", pdfJob.getJobId());
             try {
                 pdfAccessibilityTaggingService.tagPdf(pdfJob);
                 //After we would set it to completed in the db
                 pdfJob.setJobStatus(PdfJobStatus.COMPLETED);
 
-            }catch (Exception e){
+            } catch (Exception e) {
 
-                pdfJob.setJobStatus(PdfJobStatus.FAILED);
-                pdfJob.setErrorMessage(e.getMessage());
-            }finally {
-                //TODO Discuss how the file will be sent to the other services
-                //And whether it  will be used
-                try {
+                //So first we would check for if the  Retry Count  is more than 3
+                //If it is not  up to 3 or more , we will set it to be pending so the Job rescheduled again and increase the retry count
+                int currentJobRetryCount = pdfJob.getRetryCount();
+                if (currentJobRetryCount < 3) {
+                    pdfJob.setRetryCount(currentJobRetryCount + 1);
+                    pdfJob.setJobStatus(PdfJobStatus.PENDING);
+                    var savedPdfJob = pdfJobRepository.save(pdfJob);
 
+                    //Then we log the error and the retry count of the job
+                    log.error("Failed to process Job  with Id {} with error {}, Retrying for the {} time ", savedPdfJob.getJobId(), e.getMessage(), savedPdfJob.getRetryCount());
+                } else {
+                    pdfJob.setJobStatus(PdfJobStatus.FAILED);
 
-                     var savedJob = pdfJobRepository.save(pdfJob);
-                    //Then we will try to send  to the call back to it
+                    if (e instanceof CustomException) {
+                        log.error("Error occurred In Job Processing ", e);
+                        pdfJob.setErrorMessage(e.getMessage());
+                    } else {
+                        //We just want to create a new Custom Exception and get the error message
+                        CustomException unknownErrorException = new CustomException("An error occurred while trying to remediate your PDF,Kindly try again or contact support", pdfJob.getJobId(), HttpStatus.INTERNAL_SERVER_ERROR, "internal-error", e);
 
-                    //We want to get the token from the call back url
-                    var callBackUrl = savedJob.getCallbackUrl();
-                    var token =  hmacUtil.extractTokenFromUrl(callBackUrl);
-                    //Then we sign the token with the timestamp
-                    var timestamp = String.valueOf(System.currentTimeMillis());
-                    var payload = token+"|"+timestamp;
+                        //Then if the retry failed , we would then save the error message and log it so that the developer we would know what wrong  ,
 
-                    var signedHeader = hmacUtil.signToken(payload);
-                    //We will attach the headers for the signature and the timestamp
-                    RestClient webClient = RestClient.builder().
-                            baseUrl(savedJob.getCallbackUrl())
-                            .build();
-                    //Then the message will be
-                    if(savedJob.getJobStatus() == PdfJobStatus.FAILED){
-
-
-                         MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
-                         multipartBodyBuilder.part("jobId",savedJob.getJobId(), MediaType.TEXT_PLAIN);
-                         multipartBodyBuilder.part("errorMessage",savedJob.getErrorMessage());
-
-                         var multipartBody = multipartBodyBuilder.build();
-                       var response =  webClient.post()
-                               .header("X-Timestamp",timestamp)
-                               .header("X-Signature",signedHeader)
-                                .contentType(MediaType.MULTIPART_FORM_DATA)
-                        .body(multipartBody);
-
-                    }else if (savedJob.getJobStatus() == PdfJobStatus.COMPLETED){
-                        MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
-                        multipartBodyBuilder.part("jobId",savedJob.getJobId(), MediaType.TEXT_PLAIN);
-                        multipartBodyBuilder.part("pdfFile",new FileSystemResource(pdfJob.getOutputPdfFilePath()),MediaType.APPLICATION_PDF);
-
-                        var multipartBody = multipartBodyBuilder.build();
-                        var response =  webClient.post()
-                                .header("X-Timestamp",timestamp)
-                                .header("X-Signature",signedHeader)
-                                .contentType(MediaType.MULTIPART_FORM_DATA)
-                                .body(multipartBody)
-                                .retrieve()
-                                .toBodilessEntity();
-
-                        //If the job was completed  after a successfully status code , we would delete all the files in the folder
-                        if(response.getStatusCode().is2xxSuccessful()){
-                             var result = pdfAccessibilityTaggingService.deleteJobFolder(savedJob.getJobId());
-                             if(result){
-                                 log.info(" Successfully deleted folder with Job Id {} ",savedJob.getJobId());
-                             }else {
-                                 log.error(" Failed to  deleted folder with Job Id {} ",savedJob.getJobId());
-                             }
-                        }
-
+                        log.error("Error occurred In Job Processing ", unknownErrorException.getCause());
+                        pdfJob.setErrorMessage(unknownErrorException.getMessage());
                     }
-                } catch (Exception ignored) {
-
                 }
-                log.info("Finishing Processing for Job with Id {}",pdfJob.getJobId());
-            }
-        };
-        threadPoolExecutor.execute(runnable);
+
+
+                }finally{
+                    //TODO Discuss how the file will be sent to the other services
+                    //And whether it  will be used
+                //We will save to the db then send the request and retry
+
+                try {
+                    pdfJobRepository.save(pdfJob);
+                    pdfAccessibilityTaggingService.sendRequest(pdfJob);
+                } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+                    log.error("Failed to generate X- Signature Header  ",e);
+                } catch (Exception e) {
+                   log.error("Failed to clean up Job Processing  ",e);
+                }
+                log.info("Finishing Processing for Job with Id {}", pdfJob.getJobId());
+                }
+
+            //Then we remove the MDC
+            MDC.remove("jobId");
+            } ;
+            threadPoolExecutor.execute(runnable);
+        }
+
+        //We want to retryable from the network error and 401 error and 422  for 3 times
+    //And if the HMAC fails from signing
+
+
+
+
     }
-}
+

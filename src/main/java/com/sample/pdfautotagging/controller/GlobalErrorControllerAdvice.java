@@ -1,5 +1,6 @@
 package com.sample.pdfautotagging.controller;
 
+import com.sample.pdfautotagging.error.CustomException;
 import com.sample.pdfautotagging.error.ErrorResponse;
 import org.springframework.http.ResponseEntity;
 
@@ -8,6 +9,12 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 
 @ControllerAdvice
 public class GlobalErrorControllerAdvice {
+
+    // NEW: Respect the HTTP Status code from your CustomException!
+    @ExceptionHandler(CustomException.class)
+    public ResponseEntity<ErrorResponse> handleCustomException(CustomException e){
+        return ResponseEntity.status(e.getStatusCode()).body(new ErrorResponse(e.getMessage(), e.getStatusCode().value()));
+    }
     //This is where we will handle all miscellaneous errors
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleException(Exception e){
