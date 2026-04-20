@@ -19,47 +19,47 @@ import java.util.Map;
 public class PdfData {
     private String filename;
 
-    @JsonProperty("page_count")
-    private int pageCount;
+//    @JsonProperty("page_count")
+//    private int pageCount;
 
     private List<List<Object>> toc; // Can be updated to a specific type if TOC structure is known
     private List<Page> pages;
 
-    @JsonProperty("full_ocred")
-    private boolean fullOcred;
+//    @JsonProperty("full_ocred")
+//    private boolean fullOcred;
 
-    @JsonProperty("text_ocred")
-    private boolean textOcred;
+//    @JsonProperty("text_ocred")
+//    private boolean textOcred;
 
-    private List<FullTextItem> fulltext;
-    private List<Object> words; // Empty in JSON, type can be adjusted later
-    private List<PdfLink> links;
+//    private List<FullTextItem> fulltext;
+//    private List<Object> words; // Empty in JSON, type can be adjusted later
+//    private List<PdfLink> links;
     private PdfMetadata metadata;
 
-    @JsonProperty("from_bytes")
-    private boolean fromBytes;
-
-    @JsonProperty("image_dpi")
-    private int imageDpi;
-
-    @JsonProperty("image_format")
-    private String imageFormat;
-
-    @JsonProperty("image_path")
-    private String imagePath;
-
-    @JsonProperty("use_ocr")
-    private boolean useOcr;
-
-    @JsonProperty("form_fields")
-    private Map<String, Object> formFields;
-
-    @JsonProperty("force_text")
-    private boolean forceText;
-
-    @JsonProperty("embed_images")
-    private boolean embedImages;
-
-    @JsonProperty("write_images")
-    private boolean writeImages;
+//    @JsonProperty("from_bytes")
+//    private boolean fromBytes;
+//
+//    @JsonProperty("image_dpi")
+//    private int imageDpi;
+//
+//    @JsonProperty("image_format")
+//    private String imageFormat;
+//
+//    @JsonProperty("image_path")
+//    private String imagePath;
+//
+//    @JsonProperty("use_ocr")
+//    private boolean useOcr;
+//
+//    @JsonProperty("form_fields")
+//    private Object formFields;
+//
+//    @JsonProperty("force_text")
+//    private boolean forceText;
+//
+//    @JsonProperty("embed_images")
+//    private boolean embedImages;
+//
+//    @JsonProperty("write_images")
+//    private boolean writeImages;
 }

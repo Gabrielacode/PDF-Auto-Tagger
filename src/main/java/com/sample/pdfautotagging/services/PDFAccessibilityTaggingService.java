@@ -28,6 +28,8 @@ import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -162,11 +164,10 @@ public class PDFAccessibilityTaggingService {
 
         ResponseEntity<Void> response;
         if (savedJob.getJobStatus() == PdfJobStatus.FAILED) {
-            MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
-            multipartBodyBuilder.part("jobId", savedJob.getJobId(), MediaType.TEXT_PLAIN);
-            multipartBodyBuilder.part("errorMessage", savedJob.getErrorMessage());
+            MultiValueMap<String,Object> multipartBody = new LinkedMultiValueMap<>();
+            multipartBody.add("jobId",savedJob.getJobId());
+            multipartBody.add("errorMessage",savedJob.getErrorMessage());
 
-            var multipartBody = multipartBodyBuilder.build();
             response = webClient.post()
                     .header("X-Timestamp", timestamp)
                     .header("X-Signature", signedHeader)
@@ -177,11 +178,12 @@ public class PDFAccessibilityTaggingService {
 
         }
         else if (savedJob.getJobStatus() == PdfJobStatus.COMPLETED) {
-            MultipartBodyBuilder multipartBodyBuilder = new MultipartBodyBuilder();
-            multipartBodyBuilder.part("jobId", savedJob.getJobId(), MediaType.TEXT_PLAIN);
-            multipartBodyBuilder.part("pdfFile", new FileSystemResource(savedJob.getOutputPdfFilePath()), MediaType.APPLICATION_PDF);
+            MultiValueMap<String,Object> multipartBody = new LinkedMultiValueMap<>();
 
-            var multipartBody = multipartBodyBuilder.build();
+            multipartBody.add("jobId", savedJob.getJobId());
+            multipartBody.add("pdfFile", new FileSystemResource(savedJob.getOutputPdfFilePath()));
+
+
             response = webClient.post()
                     .header("X-Timestamp", timestamp)
                     .header("X-Signature", signedHeader)

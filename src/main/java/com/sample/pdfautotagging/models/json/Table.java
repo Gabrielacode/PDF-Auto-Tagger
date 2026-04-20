@@ -23,11 +23,11 @@ public class Table {
     // Note: The inner list will be null if a cell is merged!
     private List<List<List<Double>>> cells;
 
-    // The raw text data matching the grid
-    // List of Rows -> List of Columns -> String
-    private List<List<String>> extract;
-
-    // The raw markdown representation (optional, but good to keep if mapped)
-    private String markdown;
+//    // The raw text data matching the grid
+//    // List of Rows -> List of Columns -> String
+//    private List<List<String>> extract;
+//
+//    // The raw markdown representation (optional, but good to keep if mapped)
+//    private String markdown;
 
 }

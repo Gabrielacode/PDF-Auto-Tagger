@@ -15,10 +15,10 @@ import java.util.List;
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Page {
-    @JsonProperty("page_number")
-    private int pageNumber;
-
-    private double width;
-    private double height;
+//    @JsonProperty("page_number")
+//    private int pageNumber;
+//
+//    private double width;
+//    private double height;
     private List<Box> boxes;
 }

@@ -14,6 +14,6 @@ import java.util.List;
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class TextLine {
-    private List<Double> bbox;
+//    private List<Double> bbox;
     private List<Span> spans;
 }

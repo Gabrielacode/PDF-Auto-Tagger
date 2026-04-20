@@ -16,24 +16,24 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Span {
     private double size;
-    private int flags;
-    private int bidi;
+//    private int flags;
+//    private int bidi;
 
-    @JsonProperty("char_flags")
-    private int charFlags;
+//    @JsonProperty("char_flags")
+//    private int charFlags;
 
     private String font;
-    private int color;
-    private int alpha;
-    private double ascender;
-    private double descender;
-    private String text;
-
-    private List<Double> origin;
-    private List<Double> bbox;
-
-    private Integer line; // Optional in some contexts inside fulltext
-    private Integer block;
-
-    private List<Double> dir;
+//    private int color;
+//    private int alpha;
+//    private double ascender;
+//    private double descender;
+//    private String text;
+//
+//    private List<Double> origin;
+//    private List<Double> bbox;
+//
+//    private Integer line; // Optional in some contexts inside fulltext
+//    private Integer block;
+//
+//    private List<Double> dir;
 }
