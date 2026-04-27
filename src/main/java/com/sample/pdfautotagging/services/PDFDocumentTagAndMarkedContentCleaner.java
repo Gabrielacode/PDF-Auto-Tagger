@@ -12,8 +12,7 @@ import org.apache.pdfbox.pdmodel.common.PDStream;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class PDFDocumentTagAndMarkedContentCleaner{
 
@@ -35,6 +34,11 @@ public class PDFDocumentTagAndMarkedContentCleaner{
         PDFStreamParser pdfStreamParser =   new PDFStreamParser(pdfPage);
         List<Object> oldTokens = pdfStreamParser.parse();
         List<Object> newTokens = new ArrayList<>();
+        
+        //We want to keep a stack for the operators we want to delete
+        //We want to preserve the operator , for some marked content
+
+        Deque<Boolean> keepStack = new ArrayDeque<>();
 
         //Then we loop through it , analysing each line
         for (Object token : oldTokens) {
@@ -43,27 +47,61 @@ public class PDFDocumentTagAndMarkedContentCleaner{
 
                 switch (opName) {
                     case "EMC":
-                        // It's a closing tag. Just ignore it (don't add it to the new list).
-                        continue;
+
+                        // It's a closing tag. Check the stack to see if we should keep it
+                        if (!keepStack.isEmpty()) {
+                            boolean keep = keepStack.pop();
+                            if (keep) {
+                                newTokens.add(operator);
+                            }
+                        } else {
+                            // Safe fallback just in case the PDF was already malformed an we didnt know whether to keep it
+                            newTokens.add(operator);
+                        }
+                        break;
+
 
                     case "BMC":
-                        // Pop 1 Operand , which will be the tag
-                        if (!newTokens.isEmpty()) {
-                            newTokens.remove(newTokens.size() - 1);
+                        //We want to do similar for the BDC
+                        //If there is no supporting tag before it
+                        if(!newTokens.isEmpty()){
+                            //We want to get the Name
+                            Object tagName = newTokens.get(newTokens.size()-1);
+                            if (isOptionalContent(tagName)) {
+                                keepStack.push(true);
+                                newTokens.add(operator);
+                            } else {
+                                keepStack.push(false);
+                                newTokens.remove(newTokens.size() - 1); // Remove Tag Name
+                            }
+                        }else{
+                            keepStack.push(false);
+                            //No need to remove
                         }
-                        // Ignore the BMC operator itself
-                        continue;
+                        break;
 
                     case "BDC":
-                        // Pop 2 operands (The Dictionary (MCID Identifier), and then the Tag Name)
-                        if (!newTokens.isEmpty()) {
-                            newTokens.remove(newTokens.size() - 1); // Removes Dictionary
+                        //We would first need to know if the  first two tokesn are available
+                        if(newTokens.size()>=2){
+                            //We would get the Name , before the MCID dictionary and check if it is OC
+                            Object tagName = newTokens.get(newTokens.size()-2);
+                            boolean isOCTaggedName = isOptionalContent(tagName);
+                            //If it is true we want to keep the operator and then set is true to stack
+                            if(isOCTaggedName){
+                                keepStack.push(true);
+                                newTokens.add(token);
+                            }else{
+                                //We dont want the /Name and the MCID dictionary so we remove it
+                                //We want to also tell the stack to add is false so that when we reach the EMC , we can know whether to op it
+                                keepStack.push(false);
+                                newTokens.remove(newTokens.size()-1);
+                                newTokens.remove(newTokens.size()-1);
+                            }
+                        }else {
+                            //If is not greater than 2 now , that means there is no /Name or MCID Dictionary at the time
+                            keepStack.push(false);
                         }
-                        if (!newTokens.isEmpty()) {
-                            newTokens.remove(newTokens.size() - 1); // Removes Tag Name
-                        }
-                        // Ignore the BDC operator itself
-                        continue;
+                        break;
 
                     default:
                         // Normal operators (Tj, BT, Do, etc.) pass through safely!
@@ -85,6 +123,16 @@ public class PDFDocumentTagAndMarkedContentCleaner{
         }
         pdfPage.setContents(newContents);
 
+    }
+
+
+    // Helper method to check if the tag is for PDF Layers (Optional Content)
+    private boolean isOptionalContent(Object tagNameObj) {
+        if (tagNameObj instanceof COSName) {
+            COSName name = (COSName) tagNameObj;
+            return "OC".equals(name.getName()); // "OC" stands for Optional Content
+        }
+        return false;
     }
 
     //Then the method that would clean the whole document and destroy the structure tree

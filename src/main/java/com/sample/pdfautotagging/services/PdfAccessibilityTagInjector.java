@@ -1,5 +1,9 @@
 package com.sample.pdfautotagging.services;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.github.pemistahl.lingua.api.Language;
+import com.github.pemistahl.lingua.api.LanguageDetector;
+import com.github.pemistahl.lingua.api.LanguageDetectorBuilder;
 import com.sample.pdfautotagging.entities.PdfJob;
 import com.sample.pdfautotagging.error.CustomException;
 import com.sample.pdfautotagging.models.pdf.FontStyle;
@@ -19,14 +23,21 @@ import org.apache.pdfbox.pdmodel.common.PDMetadata;
 import org.apache.pdfbox.pdmodel.common.PDNumberTreeNode;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkInfo;
+import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDObjectReference;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.PDTableAttributeObject;
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode;
+import org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences;
+import org.apache.pdfbox.text.PDFTextStripper;
+
 import org.apache.xmpbox.XMPMetadata;
 import org.apache.xmpbox.schema.DublinCoreSchema;
 import org.apache.xmpbox.schema.XMPBasicSchema;
@@ -36,6 +47,7 @@ import org.springframework.http.HttpStatus;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -316,7 +328,15 @@ public class PdfAccessibilityTagInjector {
         pdfDocument.getPage(index).setContents(pdStream);
     }
 
-    public void buildStructureTreeForEachPage(PDPage pdfPage , int pageIndex , Page jsonPage,PDStructureElement documentElement,Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap,TaggingMappingEngine taggingMappingEngine){
+    public void buildStructureTreeForEachPage(PDPage pdfPage ,
+                                              int pageIndex ,
+                                              Page jsonPage,
+                                              PDStructureElement documentElement,
+                                              Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap,
+                                              TaggingMappingEngine taggingMappingEngine,
+                                              int[] nextStructureId,
+                                              JsonNode formFields
+                                              ){
 
         // 3. Prepare the ParentTree (The Bridge between Page and Document)
 
@@ -403,6 +423,14 @@ public class PdfAccessibilityTagInjector {
                 PDStructureElement tableStructureElement  = new PDStructureElement(StandardStructureTypes.TABLE, documentElement);
                 //We set the page
                 tableStructureElement.setPage(pdfPage);
+
+                //We would inject the table summary
+                if (box.getTable() != null && box.getTable().getMarkdown() != null) {
+                    // Add the markdown representation as the screen-reader summary!
+                    PDTableAttributeObject tableAttr = new PDTableAttributeObject();
+                    tableAttr.setSummary(box.getTable().getMarkdown());
+                    tableStructureElement.addAttribute(tableAttr);
+                }
                 documentElement.appendKid(tableStructureElement);
 
                 //Then we would loop through the rows of the table
@@ -522,6 +550,162 @@ public class PdfAccessibilityTagInjector {
 
         numTreeMap.put(pageIndex, parentTreeArray);
 
+
+
+        //Then we build the structure tree for the Annotations of the PDF
+        //Annotations are basically floating Canvases that are drwan abovw the Main Content Layer , so they dont actually have Operators
+        buildStructureTreeForEachPageAnnotations(pdfPage,documentElement,numTreeMap,nextStructureId,formFields);
+    }
+
+
+    public void buildStructureTreeForEachPageAnnotations(PDPage pdfPage ,
+                                                         PDStructureElement documentElement,
+                                                         Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap,
+                                                         int[] nextStructureId,
+                                                         JsonNode formFields){
+
+        //Then we would need to handle interactive forms
+        //Maybe another annotations
+        //By building the proper structure tree
+        try {
+            if (pdfPage.getAnnotations() != null && !pdfPage.getAnnotations().isEmpty()) {
+
+                // Rule 7.18.3: Set Tabs='S' so screen readers can tab through fields
+                pdfPage.getCOSObject().setName(COSName.getPDFName("Tabs"), "S");
+
+                PDStructureElement formElement = null;
+
+                for (PDAnnotation annot : pdfPage.getAnnotations()) {
+
+                    if (annot instanceof PDAnnotationWidget) {
+                        PDAnnotationWidget widget =
+                                (PDAnnotationWidget) annot;
+
+                        // Create the <Form> wrapper tag once per page
+                        if (formElement == null) {
+                            formElement = new PDStructureElement(StandardStructureTypes.FORM, documentElement);
+                            formElement.setPage(pdfPage);
+                            documentElement.appendKid(formElement);
+                        }
+
+                        // Rule 7.18.1: Dynamically pull the actual Field Name (T) to use as the Tooltip (TU)
+                        //Todo Allow the user to put tool tips by themselves
+                        String existingTooltip = widget.getCOSObject().getString(COSName.TU);
+                        if (existingTooltip == null || existingTooltip.trim().isEmpty()) {
+                            String dynamicFieldName = widget.getCOSObject().getString(COSName.T);
+                            String finalToolTip = null;
+
+                            // We would try to fetch a human-readable label from the JSON!
+                            if (dynamicFieldName != null && formFields != null && formFields.has(dynamicFieldName)) {
+                                JsonNode fieldNode = formFields.get(dynamicFieldName);
+                                // If your Python script ever extracts a "label" (e.g., "Email:"), grab it here!
+                                if (fieldNode.has("label")) {
+                                    finalToolTip = fieldNode.get("label").asText();
+                                }
+                            }
+
+                            // If the JSON didn't have a label, fallback to the internal PDF machine name
+                            if (finalToolTip == null || finalToolTip.trim().isEmpty()) {
+                                finalToolTip = dynamicFieldName;
+                            }
+
+                            //And then if there is nothing even after this , we jsut set a custom tool tip
+                            if (finalToolTip == null || finalToolTip.trim().isEmpty()) {
+                                finalToolTip = "Interactive Form Field";
+                            }
+
+                            widget.getCOSObject().setString(COSName.TU, finalToolTip);
+
+                        }
+
+                        // Rule 7.18.4: Nest Widget inside the <Form> tag using an Object Reference (OBJR)
+                        COSDictionary objRefDict = new COSDictionary();
+                        objRefDict.setName(COSName.TYPE, "OBJR");
+                        objRefDict.setItem(COSName.OBJ, widget.getCOSObject());
+
+                        org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDObjectReference objRef =
+                                new org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDObjectReference(objRefDict);
+                        formElement.appendKid(objRef);
+
+                        // Assign a unique StructParent ID to the Widget so the screen reader can link to it
+                        int structParentId = nextStructureId[0]++;
+                        widget.setStructParent(structParentId);
+
+                        // Map the widget to the ParentTree
+                        numTreeMap.put(structParentId, formElement);
+                    }
+
+                    // We have handled Interactive Content , we would aslo have to handle links
+                    //Links are handled by Apache PDF BOX as PDAnnotationLink
+                    if(annot instanceof PDAnnotationLink){
+                        PDAnnotationLink pdfLink = (PDAnnotationLink) annot;
+
+                        //We would then create the Link Strucuture Element
+                        PDStructureElement linkStructureElement = new PDStructureElement(StandardStructureTypes.LINK, documentElement);
+                        //We want to then set the Page
+                        linkStructureElement.setPage(pdfPage);
+                        //Then append to the parent Document Element
+                        documentElement.appendKid(linkStructureElement);
+
+                        //The we create our OBJR reference to be used to link the annotation to the structure element
+                        COSDictionary objectDictionary = new COSDictionary();
+                        objectDictionary.setName(COSName.TYPE,COSName.OBJR.getName());
+                        objectDictionary.setItem(COSName.OBJ,pdfLink);
+                        PDObjectReference objectReference = new PDObjectReference(objectDictionary);
+
+                        //Then we append it tothe Link Document
+                        linkStructureElement.appendKid(objectReference);
+
+                        //  Assign a unique StructParent ID so the screen reader can navigate it
+                        int structParentId = nextStructureId[0]++;
+                       pdfLink.setStructParent(structParentId);
+
+                        // Map the hyperlink directly to its ParentTree element
+                        numTreeMap.put(structParentId, linkStructureElement);
+
+
+                    }
+                 else {
+                    // CATCH-ALL FOR REMAINING ANNOTATIONS since thses dont have specific forms
+                    // Handles Sticky Notes, Highlights, Stamps, Shapes, etc.
+
+                    //  Create the generic <Annot> tag
+                    PDStructureElement annotStructureElement = new PDStructureElement(StandardStructureTypes.ANNOT, documentElement);
+                    annotStructureElement.setPage(pdfPage);
+                    documentElement.appendKid(annotStructureElement);
+
+                    //  Ensure it has an Accessible Description (Rule 8.10.4)
+                    // If it's a sticky note or highlight, it usually has text in the /Contents key.
+                    // If it doesn't, we must provide a fallback so the screen reader doesn't crash.
+                    String contents = annot.getContents();
+                    if (contents == null || contents.trim().isEmpty()) {
+                        // Fallback to the annotation's Subtype (e.g., "Highlight", "Text", "Stamp")
+                        String subtype = annot.getSubtype();
+                        annot.setContents(subtype != null ? subtype + " Annotation" : "Annotation");
+                    }
+
+                    // Create the OBJR reference to link the physical annotation to the semantic tag
+                    COSDictionary objectDictionary = new COSDictionary();
+                    objectDictionary.setName(COSName.TYPE, COSName.OBJR.getName());
+                    objectDictionary.setItem(COSName.OBJ, annot.getCOSObject());
+                    PDObjectReference objectReference = new PDObjectReference(objectDictionary);
+                    annotStructureElement.appendKid(objectReference);
+
+                    // Assign a unique StructParent ID
+                    int structParentId = nextStructureId[0]++;
+                    annot.setStructParent(structParentId);
+
+                    //  Map the annotation to the ParentTree
+                    numTreeMap.put(structParentId, annotStructureElement);
+                }
+
+
+
+                }
+            }
+        } catch (IOException e) {
+            log.error("Failed to process annotations for forms", e);
+        }
     }
     public void buildStructureTree() {
         PDDocumentCatalog catalog = pdfDocument.getDocumentCatalog();
@@ -530,6 +714,18 @@ public class PdfAccessibilityTagInjector {
         PDMarkInfo markInfo = new PDMarkInfo();
         markInfo.setMarked(true);
         catalog.setMarkInfo(markInfo);
+
+       //We would need to ensure that the viewer prefernces are not overrided if not available
+        org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences viewerPrefs = catalog.getViewerPreferences();
+
+        if (viewerPrefs == null) {
+            // Only create a new one if it doesn't exist at all
+            viewerPrefs = new org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences(new COSDictionary());
+        }
+
+        // Flip the PDF/UA title switch without destroying existing preferences
+        viewerPrefs.setDisplayDocTitle(true);
+        catalog.setViewerPreferences(viewerPrefs);
 
         //We will need to set the Language of the Document Catalog
         injectDocumentMetadataAndLanguage();
@@ -549,10 +745,12 @@ public class PdfAccessibilityTagInjector {
         //We create the num map
         Map<Integer, org.apache.pdfbox.pdmodel.common.COSObjectable> numTreeMap = new HashMap<>();
 
+        //We would need to keep a tracker for our form field ids
+        int[] nextStructParentId = new int[] { pdfDocument.getPages().getCount() };
         for (int i = 0; i<pdfDocument.getPages().getCount();i++){
             if (i >= pdfJsonData.getPages().size())break;
             var jsonPage = pdfJsonData.getPages().get(i);
-            buildStructureTreeForEachPage(pdfDocument.getPage(i),i,jsonPage,documentStructureElement,numTreeMap,taggingMappingEngines.get(i));
+            buildStructureTreeForEachPage(pdfDocument.getPage(i),i,jsonPage,documentStructureElement,numTreeMap,taggingMappingEngines.get(i),nextStructParentId,pdfJsonData.getFormFields());
         }
         //Then set the parent tree here
 
@@ -566,6 +764,10 @@ public class PdfAccessibilityTagInjector {
 
     //We want to get the catalog
         //Lets get the Language from the Document if not
+
+        var language = getDocumentLanguage();
+        //We want to then set the language
+        documentCatalog.setLanguage(language);
 
 //        Let the document use its default Language
 
@@ -817,6 +1019,43 @@ public class PdfAccessibilityTagInjector {
             default:
                 return StandardStructureTypes.P;
         }
+    }
+
+
+
+
+    //We would need a method to get the language from the document
+
+    public String getDocumentLanguage(){
+        try {
+            //We would strip , the text from the first, two pages
+            PDFTextStripper pdfTextStripper = new PDFTextStripper();
+            pdfTextStripper.setStartPage(1);
+            //Then get the if there is a second page in the document
+            var noOfPages = pdfDocument.getNumberOfPages();
+            if (noOfPages >= 2) {
+                pdfTextStripper.setEndPage(2);
+            } else {
+                pdfTextStripper.setEndPage(1);
+            }
+            String text = pdfTextStripper.getText(pdfDocument);
+
+            //If the page is empty , we set the default language to English
+            if(text == null || text.isBlank()){
+                return "en-US";
+            }
+
+            //Then use  a Language Detectors
+            LanguageDetector languageDetector = LanguageDetectorBuilder.fromAllLanguages().build();
+            Language result = languageDetector.detectLanguageOf(text);
+
+            languageDetector.unloadLanguageModels();
+            return  result.getIsoCode639_1().toString().toLowerCase();
+        } catch (Exception ignored) {
+            return "en-US";
+        }
+
+
     }
 
 }

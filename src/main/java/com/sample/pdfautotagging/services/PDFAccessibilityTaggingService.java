@@ -223,6 +223,7 @@ public class PDFAccessibilityTaggingService {
     @Recover()
     public void recoverFailure(Exception exception , PdfJob pdfJob){
         log.error("Failed to send info to the Main Service ",exception);
+        deleteJobFolder(pdfJob.getJobId());
     }
         //If the retry fails we log it and just delete the folder
 

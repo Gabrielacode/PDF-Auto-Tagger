@@ -3,6 +3,7 @@ package com.sample.pdfautotagging.models.json;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -51,8 +52,8 @@ public class PdfData {
 //    @JsonProperty("use_ocr")
 //    private boolean useOcr;
 //
-//    @JsonProperty("form_fields")
-//    private Object formFields;
+    @JsonProperty("form_fields")
+    private JsonNode formFields;
 //
 //    @JsonProperty("force_text")
 //    private boolean forceText;

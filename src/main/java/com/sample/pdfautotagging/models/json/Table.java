@@ -28,6 +28,6 @@ public class Table {
 //    private List<List<String>> extract;
 //
 //    // The raw markdown representation (optional, but good to keep if mapped)
-//    private String markdown;
+   private String markdown;
 
 }
